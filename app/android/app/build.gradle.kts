@@ -37,9 +37,13 @@ android {
         }
     }
 
-    // The Play upload key: FAUXNETIC_UPLOAD_STORE (a PKCS12 file), FAUXNETIC_UPLOAD_PASSWORD and
-    // FAUXNETIC_UPLOAD_ALIAS. Without them, release builds are signed with the debug key.
-    val uploadStore = System.getenv("FAUXNETIC_UPLOAD_STORE")?.takeIf { it.isNotBlank() }
+    // The Play upload key: FAUXNETIC_UPLOAD_PASSWORD, with FAUXNETIC_UPLOAD_STORE (a PKCS12 file,
+    // default <repo>/signing/upload.p12) and FAUXNETIC_UPLOAD_ALIAS (default "upload"). Without the
+    // password, release builds are signed with the debug key.
+    val uploadStore = System.getenv("FAUXNETIC_UPLOAD_PASSWORD")?.takeIf { it.isNotBlank() }?.let {
+        System.getenv("FAUXNETIC_UPLOAD_STORE")?.takeIf { it.isNotBlank() }
+            ?: rootProject.file("../../signing/upload.p12").path
+    }
     signingConfigs {
         if (uploadStore != null) {
             create("upload") {
