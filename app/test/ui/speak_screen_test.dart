@@ -80,6 +80,10 @@ class FakeSpeakController extends SpeakController {
     shareError = failShare ? MarkMissing.message : null;
   }
 
+  final loops = <bool>[];
+  @override
+  Future<void> setLooping(bool on) async => loops.add(on);
+
   final adjusted = <TakeAdjust>[];
   @override
   Future<void> adjust(CueItem item, TakeAdjust a) async {
@@ -517,6 +521,30 @@ void main() {
       await t.pumpAndSettle();
       expect(c.adjusted.last, TakeAdjust.defaults);
       expect(find.text('0 st'), findsOneWidget);
+    });
+
+    testWidgets('each slider has its own reset, which leaves the others', (t) async {
+      final c = await shown(t, const TakeAdjust(speed: 1.25, pitch: 2));
+      await t.tap(inDock(find.byTooltip('Adjust')));
+      await t.pumpAndSettle();
+      await t.tap(find.byTooltip('Reset Speed'));
+      await t.pumpAndSettle();
+      expect(c.adjusted.last, const TakeAdjust(pitch: 2));
+      expect(
+        t.widget<IconButton>(find.widgetWithIcon(IconButton, Icons.restart_alt).first).onPressed,
+        isNull,
+        reason: 'Speed is back at its default, so its reset is off',
+      );
+    });
+
+    testWidgets('the take loops while the panel is open', (t) async {
+      final c = await shown(t);
+      await t.tap(inDock(find.byTooltip('Adjust')));
+      await t.pumpAndSettle();
+      expect(c.loops, [true]);
+      await t.tapAt(const Offset(10, 10)); // outside the sheet
+      await t.pumpAndSettle();
+      expect(c.loops, [true, false]);
     });
 
     testWidgets('an adjusted take shows the glyph, a default one does not', (t) async {

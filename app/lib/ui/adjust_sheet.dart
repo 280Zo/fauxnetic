@@ -6,16 +6,22 @@ import '../theme.dart';
 import 'speak_controller.dart';
 
 /// The shown take's Speed, Pitch, Pauses and Volume, "Even out loudness" and Reset. Each change is
-/// saved when a slider is let go, and the take then plays and shares that way.
-Future<void> showAdjustSheet(BuildContext context, SpeakController c, CueItem item) => showModalBottomSheet<void>(
-  context: context,
-  showDragHandle: true,
-  // Taller than the default 9/16 of the screen when it needs to be; scrolls on a short one.
-  isScrollControlled: true,
-  builder: (_) => SingleChildScrollView(
-    child: _AdjustSheet(controller: c, item: item),
-  ),
-);
+/// saved when a slider is let go, and the take then plays and shares that way. The take loops
+/// while the panel is open, so each change is heard (owner, 2026-11-18).
+Future<void> showAdjustSheet(BuildContext context, SpeakController c, CueItem item) async {
+  await c.setLooping(true);
+  if (!context.mounted) return;
+  await showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    // Taller than the default 9/16 of the screen when it needs to be; scrolls on a short one.
+    isScrollControlled: true,
+    builder: (_) => SingleChildScrollView(
+      child: _AdjustSheet(controller: c, item: item),
+    ),
+  );
+  await c.setLooping(false);
+}
 
 class _AdjustSheet extends StatefulWidget {
   const _AdjustSheet({required this.controller, required this.item});
@@ -54,12 +60,20 @@ class _AdjustSheetState extends State<_AdjustSheet> {
     required double min,
     required double max,
     required double step,
+    required double initial,
     required TakeAdjust Function(double v) apply,
   }) => Padding(
     padding: const EdgeInsets.only(top: 4),
     child: Row(
       children: [
-        SizedBox(width: 72, child: Text(label)),
+        // Left of the name, away from the slider, so it isn't pressed by accident.
+        IconButton(
+          tooltip: 'Reset $label',
+          visualDensity: VisualDensity.compact,
+          icon: const Icon(Icons.restart_alt, size: 18),
+          onPressed: v == initial ? null : () => _save(apply(initial)),
+        ),
+        SizedBox(width: 64, child: Text(label)),
         Expanded(
           child: Slider(
             key: Key('adjust-$key'),
@@ -101,6 +115,7 @@ class _AdjustSheetState extends State<_AdjustSheet> {
               min: TakeAdjust.minSpeed,
               max: TakeAdjust.maxSpeed,
               step: 0.05,
+              initial: TakeAdjust.defaults.speed,
               apply: (x) => a.copyWith(speed: x),
             ),
             _slider(
@@ -111,6 +126,7 @@ class _AdjustSheetState extends State<_AdjustSheet> {
               min: -TakeAdjust.maxPitch,
               max: TakeAdjust.maxPitch,
               step: 0.5,
+              initial: TakeAdjust.defaults.pitch,
               apply: (x) => a.copyWith(pitch: x),
             ),
             _slider(
@@ -121,6 +137,7 @@ class _AdjustSheetState extends State<_AdjustSheet> {
               min: TakeAdjust.minPauses,
               max: TakeAdjust.maxPauses,
               step: 0.1,
+              initial: TakeAdjust.defaults.pauses,
               apply: (x) => a.copyWith(pauses: x),
             ),
             _slider(
@@ -128,9 +145,10 @@ class _AdjustSheetState extends State<_AdjustSheet> {
               label: 'Volume',
               value: _signed(a.gainDb, 'dB'),
               v: a.gainDb,
-              min: -TakeAdjust.maxGainDb,
+              min: TakeAdjust.minGainDb,
               max: TakeAdjust.maxGainDb,
               step: 1,
+              initial: TakeAdjust.defaults.gainDb,
               apply: (x) => a.copyWith(gainDb: x),
             ),
             SwitchListTile(

@@ -14,15 +14,15 @@ void main() {
   });
 
   test('out of range values are clamped', () {
-    final a = TakeAdjust.clamped(speed: 3, pitch: -9, pauses: 0, gainDb: 20);
+    final a = TakeAdjust.clamped(speed: 3, pitch: -9, pauses: 0, gainDb: 30);
     expect(a.speed, 1.5);
     expect(a.pitch, -3);
     expect(a.pauses, 0.5);
-    expect(a.gainDb, 6);
+    expect(a.gainDb, 20, reason: 'owner: a much higher volume max');
   });
 
   test('values from storage are clamped too', () {
     expect(TakeAdjust.fromJson({'speed': 9, 'gainDb': -40}).speed, 1.5);
-    expect(TakeAdjust.fromJson({'speed': 9, 'gainDb': -40}).gainDb, -6);
+    expect(TakeAdjust.fromJson({'speed': 9, 'gainDb': -40}).gainDb, -12);
   });
 }

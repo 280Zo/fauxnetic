@@ -362,6 +362,20 @@ void main() {
       expect(player.played, hasLength(1));
     });
 
+    test('looping replays the shown take until it is turned off', () async {
+      final c = await adjusting();
+      final item = await oneLine(c);
+      await c.select(item);
+      await c.setLooping(true);
+      await pumpUntil(() => player.played.length == 1);
+      player.finish();
+      await pumpUntil(() => player.played.length == 2);
+      await c.setLooping(false);
+      player.finish();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(player.played, hasLength(2));
+    });
+
     test('a failed mark shares nothing and says why', () async {
       final c = await adjusting(renderer: TakeRenderer(cues, () => PassMarker(score: 0.2), run: syncRun));
       final item = await oneLine(c);

@@ -95,6 +95,10 @@ abstract class SpeakController extends ChangeNotifier {
 
   Future<void> resetAdjust(CueItem item) => adjust(item, TakeAdjust.defaults);
 
+  /// While on (the Adjust panel is open), the shown take plays and starts again when it ends.
+  bool looping = false;
+  Future<void> setLooping(bool on) async => looping = on;
+
   /// Generates the line again with a new seed (different audio); ignored for lines without a clip.
   Future<void> tryAgain(CueItem item);
 
@@ -257,6 +261,13 @@ class CueSpeakController extends SpeakController {
       if (e is! MarkMissing) debugPrint('Fauxnetic render failed: ${e.runtimeType}');
       return _cues.clipBytes(item);
     }
+  }
+
+  @override
+  Future<void> setLooping(bool on) async {
+    looping = on;
+    final s = shown;
+    if (on && s != null && s.hasClip && playingId != s.id) unawaited(_play(s));
   }
 
   /// The newest adjust wins; a line stopped by an adjust resumes once, after the last one.
@@ -491,6 +502,11 @@ class CueSpeakController extends SpeakController {
     }
     if (finished && mine == _token) await _cues.markPlayed(item.id);
     if (!_disposed) await refresh();
+    // Looping (Adjust panel open): the same take again, as it is now set.
+    if (finished && mine == _token && looping && shownId == item.id && !_disposed) {
+      final latest = items.where((c) => c.id == item.id).firstOrNull;
+      if (latest != null) unawaited(_play(latest));
+    }
   }
 
   /// The model making (or that will make) [item]: what the preparer opened, else the line's own.

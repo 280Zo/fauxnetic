@@ -20,6 +20,23 @@ Float32List join(List<Float32List> parts) {
 
 Float32List silence(double seconds, int rate) => Float32List((seconds * rate).round());
 
+/// Start (s) of the longest run of near-silent samples.
+double longestQuietRun(Float32List x, int rate) {
+  var best = 0, bestStart = 0, run = 0;
+  for (var i = 0; i < x.length; i++) {
+    if (x[i].abs() < 0.001) {
+      run++;
+      if (run > best) {
+        best = run;
+        bestStart = i - run + 1;
+      }
+    } else {
+      run = 0;
+    }
+  }
+  return bestStart / rate;
+}
+
 double dbfs(Float32List x) => 20 * log(sqrt(x.fold<double>(0, (s, v) => s + v * v) / x.length)) / ln10;
 
 void main() {
@@ -41,6 +58,32 @@ void main() {
     const r48 = 48000;
     final x = join([tone(0.4, r48), silence(0.3, r48), tone(0.4, r48)]);
     expect((scalePauses(x, r48, 2).length - x.length) / r48, closeTo(0.3, 0.02));
+  });
+
+  test('Pauses adds a pause after a period where the model made none', () {
+    // Owner, 2026-11-18: Qwen runs sentences together, so there was nothing to stretch. Two
+    // "sentences" of equal length with only a 30 ms dip between them.
+    final x = join([tone(0.5, r), tone(0.03, r, amp: 0.02), tone(0.5, r)]);
+    final out = scalePauses(x, r, 2, words: ['Hello', 'there.', 'Again', 'now.']);
+    expect((out.length - x.length) / r, closeTo(0.4, 0.02));
+    final quietStart = longestQuietRun(out, r);
+    expect(quietStart, closeTo(0.5, 0.06), reason: 'at the sentence boundary');
+  });
+
+  test('a comma gets a shorter added pause than a period', () {
+    final x = join([tone(0.5, r), tone(0.03, r, amp: 0.02), tone(0.5, r)]);
+    final out = scalePauses(x, r, 2, words: ['Hello', 'there,', 'again', 'now.']);
+    expect((out.length - x.length) / r, closeTo(0.2, 0.02));
+  });
+
+  test('no punctuation, no added pause', () {
+    final x = tone(1, r);
+    expect(scalePauses(x, r, 2, words: ['one', 'two', 'three', 'four']).length, x.length);
+  });
+
+  test('below 1x no pause is added', () {
+    final x = join([tone(0.5, r), tone(0.03, r, amp: 0.02), tone(0.5, r)]);
+    expect(scalePauses(x, r, 0.5, words: ['Hello', 'there.', 'Again', 'now.']).length, x.length);
   });
 
   test('no pauses, pauses setting is a no-op', () {

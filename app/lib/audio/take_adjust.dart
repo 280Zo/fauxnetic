@@ -14,14 +14,17 @@ class TakeAdjust {
     speed: speed.clamp(minSpeed, maxSpeed).toDouble(),
     pitch: pitch.clamp(-maxPitch, maxPitch).toDouble(),
     pauses: pauses.clamp(minPauses, maxPauses).toDouble(),
-    gainDb: gainDb.clamp(-maxGainDb, maxGainDb).toDouble(),
+    gainDb: gainDb.clamp(minGainDb, maxGainDb).toDouble(),
     normalize: normalize,
   );
 
   static const minSpeed = 0.75, maxSpeed = 1.5;
   static const maxPitch = 3.0;
   static const minPauses = 0.5, maxPauses = 2.5;
-  static const maxGainDb = 6.0;
+
+  /// Owner, 2026-11-18: "the volume needs a much higher max". The limiter keeps big boosts from
+  /// clipping (they get louder and more compressed).
+  static const minGainDb = -12.0, maxGainDb = 20.0;
   static const defaults = TakeAdjust();
 
   final double speed;

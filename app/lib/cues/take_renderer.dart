@@ -33,8 +33,9 @@ class TakeRenderer {
     final bytes = Uint8List.fromList(await _cues.clipBytes(item));
     final marker = _marker;
     final adjust = take.adjust;
+    final words = item.text.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
     final watch = Stopwatch()..start();
-    final out = await _run(() => _render(bytes, adjust, marker));
+    final out = await _run(() => _render(bytes, adjust, words, marker));
     // On the phone's log (no text of the line): how long a take takes to render.
     debugPrint('Fauxnetic render: ${watch.elapsedMilliseconds} ms for ${wavSeconds(bytes).toStringAsFixed(1)} s');
     if (out == null) throw const MarkMissing();
@@ -44,10 +45,10 @@ class TakeRenderer {
   }
 }
 
-Uint8List? _render(Uint8List bytes, TakeAdjust adjust, Marker Function() makeMarker) {
+Uint8List? _render(Uint8List bytes, TakeAdjust adjust, List<String> words, Marker Function() makeMarker) {
   final rate = wavSampleRate(bytes);
   final marker = makeMarker();
-  final marked = marker.embed(renderTake(wavSamples(bytes), rate, adjust));
+  final marked = marker.embed(renderTake(wavSamples(bytes), rate, adjust, words: words));
   if (marker.detect(marked) <= kMarkDetected) return null;
   return encodeWav(marked, rate);
 }
