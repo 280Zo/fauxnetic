@@ -91,9 +91,20 @@ void main() {
     expect(scalePauses(x, r, 2).length, x.length);
   });
 
-  test('normalize brings a quiet take to -20 dBFS', () {
+  test('normalize brings a quiet take to -16 dBFS', () {
+    // Owner, 2026-11-18: at -20 it made almost no difference (the models already give about -25).
     final out = normalizeSpeech(tone(1, r, amp: 0.01), r);
-    expect(dbfs(out), closeTo(-20, 1));
+    expect(dbfs(out), closeTo(-16, 1));
+  });
+
+  test('normalize lifts a peaky take fully; the limiter catches its peaks', () {
+    // Like VoxCPM: speech at about -25 dBFS with peaks near -4 dBFS.
+    final x = Float32List.fromList([
+      for (var i = 0; i < r; i++) 0.07 * sin(2 * pi * 220 * i / r) + (i % 2400 < 24 ? 0.55 : 0.0),
+    ]);
+    final out = renderTake(x, r, TakeAdjust.defaults);
+    expect(dbfs(out), greaterThan(-17.5), reason: 'near -16 dBFS; held back by the peaks it was -20.3');
+    expect(out.fold<double>(0, (m, v) => max(m, v.abs())), lessThanOrEqualTo(0.98));
   });
 
   test('never clips', () {

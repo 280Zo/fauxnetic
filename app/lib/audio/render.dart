@@ -16,8 +16,9 @@ const _minPause = 0.12;
 /// A shortened pause never gets shorter than this, so words don't run together.
 const _shortestPause = 0.08;
 
-/// Speech is brought to this RMS (-20 dBFS) by "Even out loudness".
-const _targetRms = 0.1;
+/// Speech is brought to this RMS (-16 dBFS, a usual level for speech on phones) by "Even out
+/// loudness". At -20 it barely changed the models' takes, which come out near -25 (2026-11-18).
+const _targetRms = 0.158;
 
 /// Highest sample level after rendering.
 const _ceiling = 0.98;
@@ -155,8 +156,8 @@ Float32List scalePauses(Float32List pcm, int rate, double factor, {List<String> 
   return Float32List.fromList(out);
 }
 
-/// [pcm] scaled so its speech (the frames within 35 dB of the loudest) has an RMS of -20 dBFS, and
-/// scaled down again if that would push a peak past [_ceiling].
+/// [pcm] scaled so its speech (the frames within 35 dB of the loudest) has an RMS of -16 dBFS.
+/// Peaks that end up too high are left to [renderTake]'s limiter, so a peaky take is still lifted.
 Float32List normalizeSpeech(Float32List pcm, int rate) {
   final n = (_frame * rate).round();
   final loud = _loudFrames(pcm, n);
@@ -169,10 +170,7 @@ Float32List normalizeSpeech(Float32List pcm, int rate) {
     }
   }
   if (count == 0 || sum == 0) return pcm;
-  var gain = _targetRms / math.sqrt(sum / count);
-  final peak = _peak(pcm);
-  if (peak * gain > _ceiling) gain = _ceiling / peak;
-  return _scaled(pcm, gain);
+  return _scaled(pcm, _targetRms / math.sqrt(sum / count));
 }
 
 /// Level of each [n]-sample frame in dB.
