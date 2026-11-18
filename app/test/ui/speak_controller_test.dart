@@ -90,6 +90,13 @@ class TwoSecondRenderer extends TakeRenderer {
   Future<Uint8List> wav(CueItem item) async => encodeWav(Float32List(48000), 24000);
 }
 
+/// Fails the way a broken background render or library load would.
+class BrokenRenderer extends TakeRenderer {
+  BrokenRenderer(CueRepo cues) : super(cues, PassMarker.new);
+  @override
+  Future<Uint8List> wav(CueItem item) async => throw StateError('isolate failed');
+}
+
 R syncRun<R>(R Function() f) => f();
 
 void main() {
@@ -310,6 +317,49 @@ void main() {
       expect(player.events, ['play', 'stop', 'play']);
       expect(player.froms.last.inMilliseconds / 1000, closeTo(2 / 1.25, 0.1));
       expect(c.playingId, item.id);
+    });
+
+    test('two quick changes while playing resume once, with the second setting', () async {
+      final c = await adjusting();
+      final item = await oneLine(c);
+      unawaited(c.play(item));
+      await pumpUntil(() => player.played.length == 1);
+      final first = c.adjust(c.items.single, const TakeAdjust(speed: 1.25));
+      final second = c.adjust(c.items.single, const TakeAdjust(speed: 1.5));
+      await Future.wait([first, second]);
+      await pumpUntil(() => player.played.length >= 2);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(player.played, hasLength(2), reason: 'one resume');
+      expect((player.playedBytes.last - 44) / 2 / 24000, closeTo(4 / 1.5, 0.1), reason: 'the second setting');
+      expect(c.lengthSeconds, closeTo(4 / 1.5, 0.1));
+    });
+
+    test('a take re-rendering does not restart after another line is played', () async {
+      final c = await adjusting();
+      await c.add('One.');
+      await c.add('Two.');
+      await c.idle;
+      final one = c.items.firstWhere((x) => x.text == 'One.');
+      final two = c.items.firstWhere((x) => x.text == 'Two.');
+      unawaited(c.play(one));
+      await pumpUntil(() => player.played.length == 1);
+      final adjusting1 = c.adjust(one, const TakeAdjust(speed: 1.25));
+      unawaited(c.play(two));
+      await adjusting1;
+      await pumpUntil(() => player.played.length >= 2);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(player.played, hasLength(2), reason: 'only Two plays');
+      expect(c.playingId, two.id);
+    });
+
+    test('a render error still plays the take as it was stored', () async {
+      final c = await adjusting(renderer: BrokenRenderer(cues));
+      final item = await oneLine(c);
+      await c.select(item);
+      expect(c.lengthSeconds, greaterThan(0), reason: 'the waveform falls back too');
+      unawaited(c.play(item));
+      await pumpUntil(() => player.played.length == 1);
+      expect(player.played, hasLength(1));
     });
 
     test('a failed mark shares nothing and says why', () async {

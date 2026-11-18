@@ -252,25 +252,40 @@ class CueSpeakController extends SpeakController {
     if (r == null) return _cues.clipBytes(item);
     try {
       return await r.wav(item);
-    } on MarkMissing {
+    } catch (e) {
+      // Playback never goes silent because processing failed: the take plays as it was made.
+      if (e is! MarkMissing) debugPrint('Fauxnetic render failed: ${e.runtimeType}');
       return _cues.clipBytes(item);
     }
   }
 
+  /// The newest adjust wins; a line stopped by an adjust resumes once, after the last one.
+  var _adjustSeq = 0;
+  ({String id, double at, double length})? _resume;
+
   @override
   Future<void> adjust(CueItem item, TakeAdjust a) async {
-    final wasPlaying = playingId == item.id;
-    final at = playedSeconds, oldLength = lengthSeconds;
-    if (wasPlaying) await _stopIfPlaying(item);
-    final updated = await _cues.setAdjust(item.id, item.current, a);
-    await refresh();
-    if (updated == null) return;
-    if (shownId == item.id) await _loadShape(updated);
-    notifyListeners();
-    if (wasPlaying) {
-      final from = oldLength > 0 ? at * lengthSeconds / oldLength : 0.0;
-      unawaited(_play(updated, from: Duration(milliseconds: (from * 1000).round())));
+    final seq = ++_adjustSeq;
+    if (playingId == item.id) {
+      _resume = (id: item.id, at: playedSeconds, length: lengthSeconds);
+      await _stopIfPlaying(item);
     }
+    final token = _token;
+    await _cues.setAdjust(item.id, item.current, a);
+    await refresh();
+    if (seq != _adjustSeq) return;
+    final latest = items.where((c) => c.id == item.id).firstOrNull;
+    if (latest == null) return;
+    if (shownId == item.id) await _loadShape(latest);
+    if (seq != _adjustSeq) return;
+    notifyListeners();
+    final r = _resume;
+    if (r == null || r.id != item.id) return;
+    _resume = null;
+    // Not if another line was played or shown in the meantime.
+    if (_token != token || shownId != item.id) return;
+    final from = r.length > 0 ? r.at * lengthSeconds / r.length : 0.0;
+    unawaited(_play(latest, from: Duration(milliseconds: (from * 1000).round())));
   }
 
   @override

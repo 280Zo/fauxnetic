@@ -32,6 +32,14 @@ class FakeMarker implements Marker {
 
 R sync<R>(R Function() f) => f();
 
+/// A marker that can be made inside the background isolate (no captured state).
+class SendableMarker implements Marker {
+  @override
+  Float32List embed(Float32List pcm) => pcm;
+  @override
+  double detect(Float32List pcm) => 0.97;
+}
+
 void main() {
   late Directory dir;
   late CueRepo cues;
@@ -54,6 +62,11 @@ void main() {
     final expected = renderTake(wavSamples(testRefWav()), 24000, TakeAdjust.defaults);
     expect(out.length, expected.length);
     expect(out[1234], closeTo(expected[1234] + 0.01, 2 / 32767));
+  });
+
+  test('renders in a real background isolate', () async {
+    final out = await TakeRenderer(cues, SendableMarker.new).wav(line);
+    expect(wavSeconds(out), closeTo(5, 0.1));
   });
 
   test('keeps the sample rate', () async {

@@ -30,8 +30,27 @@ Float32List renderTake(Float32List pcm, int rate, TakeAdjust a) {
   }
   if (a.normalize) x = normalizeSpeech(x, rate);
   if (a.gainDb != 0) x = _scaled(x, math.pow(10, a.gainDb / 20).toDouble());
-  final peak = _peak(x);
-  return peak > _ceiling ? _scaled(x, _ceiling / peak) : x;
+  return _peak(x) > _knee ? _limited(x) : x;
+}
+
+/// The soft limiter's knee: quieter samples pass untouched.
+const _knee = 0.7;
+
+/// Squeezes only the peaks above [_knee] smoothly toward [_ceiling], so a volume boost is heard
+/// instead of the whole take being turned back down.
+Float32List _limited(Float32List x) {
+  const room = _ceiling - _knee;
+  final out = Float32List(x.length);
+  for (var i = 0; i < x.length; i++) {
+    final v = x[i], m = v.abs();
+    out[i] = m <= _knee ? v : (v.sign * (_knee + room * _tanh((m - _knee) / room)));
+  }
+  return out;
+}
+
+double _tanh(double v) {
+  final e = math.exp(2 * v);
+  return (e - 1) / (e + 1);
 }
 
 /// Each pause of at least 120 ms inside the speech, scaled by [factor] around its middle (never

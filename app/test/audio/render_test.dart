@@ -58,6 +58,17 @@ void main() {
     expect(out.fold<double>(0, (m, v) => max(m, v.abs())), lessThanOrEqualTo(0.98));
   });
 
+  test('volume up is heard even when the peaks are already high', () {
+    // Speech-like: a quiet body with short loud peaks, so evening out loudness leaves little headroom.
+    final x = Float32List.fromList([
+      for (var i = 0; i < r; i++) 0.1 * sin(2 * pi * 220 * i / r) + (i % 2400 < 24 ? 0.8 : 0.0),
+    ]);
+    final base = renderTake(x, r, TakeAdjust.defaults);
+    final louder = renderTake(x, r, const TakeAdjust(gainDb: 6));
+    expect(dbfs(louder) - dbfs(base), greaterThan(4));
+    expect(louder.fold<double>(0, (m, v) => max(m, v.abs())), lessThanOrEqualTo(0.98));
+  });
+
   test('default settings only normalize', () {
     final x = join([tone(0.4, r, amp: 0.05), silence(0.3, r), tone(0.4, r, amp: 0.05)]);
     expect(renderTake(x, r, TakeAdjust.defaults), normalizeSpeech(x, r));
