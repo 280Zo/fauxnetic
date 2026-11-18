@@ -1,0 +1,47 @@
+name: fauxnetic
+description: "On-device voice and speaking-style cloning for security demos."
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.14.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  material_ui: ^1.1.0
+  crispasr:
+    git:
+      url: https://github.com/CrispStrobe/CrispASR
+      ref: 9ddae4590d427f27e0ca04694864eed66bcb530e
+      path: flutter/crispasr
+  ffi: 2.2.0
+  flutter_secure_storage: 11.2.0
+  cryptography: 2.9.0
+  just_audio: 0.10.6
+  file_picker: 13.3.3
+  flutter_foreground_task: 11.0.3
+  path_provider: 2.1.6
+  http: 1.6.0
+  crypto: 3.0.8
+  record: 7.2.0
+  share_plus: 13.3.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  integration_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/licenses/
+    - assets/fonts/OFL.txt
+  fonts:
+    - family: AtkinsonHyperlegibleNext
+      fonts:
+        - asset: assets/fonts/AtkinsonHyperlegibleNext-Regular.ttf
+        - asset: assets/fonts/AtkinsonHyperlegibleNext-Bold.ttf
+          weight: 700

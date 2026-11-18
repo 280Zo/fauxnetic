@@ -1,0 +1,4 @@
+libcrispasr.so
+libggml-base.so
+libggml-cpu.so
+libggml.so

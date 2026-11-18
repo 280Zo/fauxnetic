@@ -1,0 +1,120 @@
+diff --git a/src/crispasr_c_api.cpp b/src/crispasr_c_api.cpp
+index 5a778040..0587739c 100644
+--- a/src/crispasr_c_api.cpp
++++ b/src/crispasr_c_api.cpp
+@@ -13922,6 +13922,33 @@ CA_EXPORT int crispasr_session_set_temperature(crispasr_session* s, float temper
+     return touched > 0 ? 0 : -2;
+ }
+ 
++// Qwen3-TTS: a callback run after each generated frame with its codebook-0 code; non-zero stops the
++// line and crispasr_session_synthesize returns nullptr. Pass nullptr to clear. rc -2 for other backends.
++CA_EXPORT int crispasr_session_set_tts_frame_watch(crispasr_session* s, int (*cb)(int, int32_t, void*), void* ud) {
++    if (!s)
++        return -1;
++#ifdef CA_HAVE_QWEN3_TTS
++    if (s->qwen3_tts_ctx) {
++        qwen3_tts_set_frame_watch((qwen3_tts_context*)s->qwen3_tts_ctx, cb, ud);
++        return 0;
++    }
++#endif
++    (void)cb;
++    (void)ud;
++    return -2;
++}
++
++// Qwen3-TTS: why the last line ended (1 end of speech, 2 frame limit, 3 KV ceiling, 4 stopped by
++// the frame watch); 0 for other backends.
++CA_EXPORT int crispasr_session_last_tts_stop_reason(crispasr_session* s) {
++#ifdef CA_HAVE_QWEN3_TTS
++    if (s && s->qwen3_tts_ctx)
++        return qwen3_tts_last_stop_reason((qwen3_tts_context*)s->qwen3_tts_ctx);
++#endif
++    (void)s;
++    return 0;
++}
++
+ // Set the seed for sampling-capable TTS backends. Unsupported backends
+ // silently no-op (rc=-2).
+ CA_EXPORT int crispasr_session_set_tts_seed(crispasr_session* s, uint64_t seed) {
+diff --git a/src/qwen3_tts.cpp b/src/qwen3_tts.cpp
+index 81b6fa5e..dedcfc24 100644
+--- a/src/qwen3_tts.cpp
++++ b/src/qwen3_tts.cpp
+@@ -875,6 +875,8 @@ struct qwen3_tts_context {
+     int last_stop_reason = 6;
+     int last_eos_token_id = -1;
+     int last_max_frames = 0;
++    qwen3_tts_frame_watch frame_watch = nullptr;
++    void* frame_watch_ud = nullptr;
+ 
+     g3t_codec codec;
+     std::vector<uint8_t> codec_compute_meta;
+@@ -7768,8 +7770,12 @@ extern "C" int32_t* qwen3_tts_synthesize_codes(struct qwen3_tts_context* ctx, co
+     }
+     std::vector<int32_t> all_codes;
+     int frames = 0;
+-    // No-op per-frame hook: collect the whole clip, then return the codes.
+-    if (!qwen3_tts_generate_codes_ar(ctx, text, all_codes, &frames, [](int) { return true; })) {
++    // Per-frame hook: the caller's frame watch (if any) can stop the line; otherwise collect it all.
++    const size_t n_groups = (size_t)ctx->hp.n_code_groups;
++    auto on_frame = [ctx, &all_codes, n_groups](int f) {
++        return !ctx->frame_watch || ctx->frame_watch(f, all_codes[(size_t)f * n_groups], ctx->frame_watch_ud) == 0;
++    };
++    if (!qwen3_tts_generate_codes_ar(ctx, text, all_codes, &frames, on_frame)) {
+         return nullptr;
+     }
+     if (out_n_codes) {
+@@ -7917,8 +7923,12 @@ extern "C" float* qwen3_tts_synthesize(struct qwen3_tts_context* ctx, const char
+         codes = qwen3_tts_synthesize_codes(ctx, text, &n_codes);
+     }
+     const double t_codes = now_ms();
+-    if (!codes || n_codes <= 0) {
++    // A watched line that didn't end on its own (stopped by the watch, or at the frame limit or KV
++    // ceiling) is discarded by the caller, so don't spend time decoding it.
++    const int why = ctx->last_stop_reason;
++    if (!codes || n_codes <= 0 || (ctx->frame_watch && (why == 2 || why == 3 || why == 4))) {
+         free(codes);
++        qwen3_tts_reset_scratch_sched(ctx);
+         return nullptr;
+     }
+     const int n_q = (int)ctx->codec.hp.n_q;
+@@ -8227,6 +8237,17 @@ extern "C" void qwen3_tts_pcm_free(float* pcm) {
+     free(pcm);
+ }
+ 
++extern "C" void qwen3_tts_set_frame_watch(struct qwen3_tts_context* ctx, qwen3_tts_frame_watch cb, void* user_data) {
++    if (!ctx)
++        return;
++    ctx->frame_watch = cb;
++    ctx->frame_watch_ud = user_data;
++}
++
++extern "C" int qwen3_tts_last_stop_reason(struct qwen3_tts_context* ctx) {
++    return ctx ? ctx->last_stop_reason : 0;
++}
++
+ extern "C" void qwen3_tts_sync(struct qwen3_tts_context* ctx) {
+     if (!ctx)
+         return;
+diff --git a/src/qwen3_tts.h b/src/qwen3_tts.h
+index 89d20261..0bc37749 100644
+--- a/src/qwen3_tts.h
++++ b/src/qwen3_tts.h
+@@ -309,6 +309,17 @@ float* qwen3_tts_synthesize_streaming(struct qwen3_tts_context* ctx, const char*
+ 
+ void qwen3_tts_pcm_free(float* pcm);
+ 
++// Called after each generated frame of qwen3_tts_synthesize with the frame's codebook-0 code; a
++// non-zero return stops the line. While a watch is set, a line that doesn't end on its own (stopped
++// by the watch, or at the frame limit or KV ceiling) returns nullptr without being decoded.
++// Lets a caller end a line that has gone wrong (e.g. silence that never turns into speech).
++typedef int (*qwen3_tts_frame_watch)(int frame, int32_t cb0, void* user_data);
++void qwen3_tts_set_frame_watch(struct qwen3_tts_context* ctx, qwen3_tts_frame_watch cb, void* user_data);
++
++// Why the last line ended: 1 end of speech, 2 frame limit, 3 KV ceiling, 4 stopped by a frame watch
++// or streaming callback, other values for early failures.
++int qwen3_tts_last_stop_reason(struct qwen3_tts_context* ctx);
++
+ void qwen3_tts_free(struct qwen3_tts_context* ctx);
+ 
+ // Drain the GPU command queue — blocks until all previously submitted
