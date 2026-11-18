@@ -38,12 +38,23 @@ class ShareService {
     return s.isEmpty ? 'line' : s;
   }
 
+  /// "AJ-AI-Qwen3-TTS-v2-20261118093912.wav": the voice, AI (so the receiver knows it is
+  /// synthetic), the model and version number of the shown take, and when it was made (local time).
+  String fileName(CueItem c, String personName) {
+    final take = c.clips[c.current.clamp(0, c.clips.length - 1)];
+    final t = (take.madeAt ?? c.readyAt ?? _clock()).toLocal();
+    String two(int n) => n.toString().padLeft(2, '0');
+    final stamp = '${t.year}${two(t.month)}${two(t.day)}${two(t.hour)}${two(t.minute)}${two(t.second)}';
+    final model = _safe(take.engine ?? 'Fauxnetic');
+    return '${_safe(personName)}-AI-$model-v${c.current.clamp(0, c.clips.length - 1) + 1}-$stamp.wav';
+  }
+
   /// Returns false, sharing nothing, when the line has no clip or it has expired.
   Future<bool> share(CueItem c, String personName) async {
     if (!c.hasClip || isExpired(c, _clock())) return false;
     final bytes = await _cues.clipBytes(c);
     await shareDir.create(recursive: true);
-    final file = File('${shareDir.path}/${_safe(personName)}-${c.id.substring(0, 6)}.wav');
+    final file = File('${shareDir.path}/${fileName(c, personName)}');
     try {
       await file.writeAsBytes(bytes, flush: true);
       await _sink(file);

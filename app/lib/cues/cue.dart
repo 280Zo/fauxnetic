@@ -6,16 +6,28 @@ const kRetention = Duration(hours: 24);
 
 /// One generated take of a line: its encrypted clip (relative to the app support directory) and seed.
 class CueClip {
-  const CueClip(this.file, this.seed, {this.engine});
+  const CueClip(this.file, this.seed, {this.engine, this.madeAt});
   final String file;
   final int seed;
 
   /// The voice model that made this take ("Qwen3-TTS", "OmniVoice"); null for takes stored before engines.
   final String? engine;
 
-  Map<String, Object?> toJson() => {'file': file, 'seed': seed, 'engine': ?engine};
-  factory CueClip.fromJson(Map<String, Object?> j) =>
-      CueClip(j['file']! as String, j['seed']! as int, engine: j['engine'] as String?);
+  /// When the take was made (UTC); null for takes stored before 2026-11-18.
+  final DateTime? madeAt;
+
+  Map<String, Object?> toJson() => {
+    'file': file,
+    'seed': seed,
+    'engine': ?engine,
+    if (madeAt != null) 'madeAt': madeAt!.toIso8601String(),
+  };
+  factory CueClip.fromJson(Map<String, Object?> j) => CueClip(
+    j['file']! as String,
+    j['seed']! as int,
+    engine: j['engine'] as String?,
+    madeAt: j['madeAt'] is String ? DateTime.tryParse(j['madeAt']! as String) : null,
+  );
 }
 
 class CueItem {

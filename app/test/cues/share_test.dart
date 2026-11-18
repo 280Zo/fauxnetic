@@ -10,6 +10,13 @@ import 'package:fauxnetic/storage/vault.dart';
 import '../support/keys.dart';
 import '../support/people.dart';
 
+/// The phone's local time as YYYYMMDDHHMMSS.
+String stamp(DateTime t) {
+  final l = t.toLocal();
+  String two(int n) => n.toString().padLeft(2, '0');
+  return '${l.year}${two(l.month)}${two(l.day)}${two(l.hour)}${two(l.minute)}${two(l.second)}';
+}
+
 void main() {
   late Directory dir;
   late Directory shareDir;
@@ -42,10 +49,22 @@ void main() {
       },
     );
     expect(await s.share(line, 'Sam Quill'), isTrue);
-    expect(handed.single, '${shareDir.path}/Sam-Quill-${line.id.substring(0, 6)}.wav');
+    expect(handed.single, '${shareDir.path}/Sam-Quill-AI-Fauxnetic-v1-${stamp(now)}.wav');
     expect(existedWhileSharing, isTrue);
     expect(wavSeconds(bytesWhileSharing), closeTo(5, 1e-6));
     expect(File(handed.single).existsSync(), isFalse);
+  });
+
+  test('each version is named by its model, number and when it was made', () async {
+    // Owner, 2026-11-18: takes of one line all came out with the same name.
+    final later = now.add(const Duration(minutes: 3, seconds: 7));
+    final again = await cues.regenerate(line.id, 2, model: 'pocket').then((_) async => (await cues.all()).single);
+    final two = (await cues.storeClip(again, testRefWav(), later, engine: 'VoxCPM 2 (small)'))!;
+    final handed = <String>[];
+    final s = ShareService(cues, shareDir, clock: () => later, sink: (f) async => handed.add(f.path.split('/').last));
+    await s.share(two, 'AJ');
+    await s.share(two.copyWith(current: 0), 'AJ');
+    expect(handed, ['AJ-AI-VoxCPM-2-small-v2-${stamp(later)}.wav', 'AJ-AI-Fauxnetic-v1-${stamp(now)}.wav']);
   });
 
   test('the file is deleted even when the share sheet fails', () async {
@@ -61,9 +80,9 @@ void main() {
     await s.share(line, '***');
     await s.share(line, 'Bartholomew' * 40);
     final names = handed.map((p) => p.split('/').last).toList();
-    expect(names[0], 'Zoë-Co-${line.id.substring(0, 6)}.wav');
-    expect(names[1], 'line-${line.id.substring(0, 6)}.wav');
-    expect(names[2].length, lessThanOrEqualTo(60), reason: 'a very long name still makes a valid file name');
+    expect(names[0], 'Zoë-Co-AI-Fauxnetic-v1-${stamp(now)}.wav');
+    expect(names[1], 'line-AI-Fauxnetic-v1-${stamp(now)}.wav');
+    expect(names[2].length, lessThanOrEqualTo(100), reason: 'a very long name still makes a valid file name');
     expect(handed.every((p) => File(p).parent.path == shareDir.path), isTrue);
   });
 

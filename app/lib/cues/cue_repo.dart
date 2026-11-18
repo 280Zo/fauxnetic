@@ -79,7 +79,7 @@ class CueRepo {
         if (await file.exists()) await file.delete();
         return null;
       }
-      final clips = [...c.clips, CueClip(rel, c.seed, engine: engine)];
+      final clips = [...c.clips, CueClip(rel, c.seed, engine: engine, madeAt: now)];
       final ready = c.copyWith(
         status: CueStatus.ready,
         clips: clips,
