@@ -10,6 +10,7 @@ import '../engine/tts_models.dart';
 import '../recording/scripts.dart';
 import '../storage/storage_report.dart';
 import '../theme.dart';
+import 'adjust_sheet.dart';
 import 'download_dialog.dart';
 import 'speak_controller.dart';
 
@@ -474,7 +475,10 @@ class _Player extends StatelessWidget {
           height: 32,
           child: Row(
             children: [
-              if (item.clips.length > 1) _takeSwitcher(context, item, c),
+              if (item.clips.length > 1)
+                _takeSwitcher(context, item, c)
+              else if (!c.adjustOf(item).isDefault)
+                Padding(padding: const EdgeInsets.only(left: 4), child: _adjustedMark(context)),
               // Model and Re-generate shrink together rather than wrap on a narrow phone.
               Expanded(
                 child: Align(
@@ -533,14 +537,26 @@ class _Player extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Expanded(
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: IconButton(
-                  tooltip: 'Share',
-                  visualDensity: VisualDensity.compact,
-                  icon: const Icon(Icons.share_outlined, size: 20),
-                  onPressed: () => c.share(item),
-                ),
+              child: Row(
+                children: [
+                  IconButton(
+                    tooltip: 'Share',
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.share_outlined, size: 20),
+                    onPressed: () async {
+                      final messenger = ScaffoldMessenger.of(context);
+                      await c.share(item);
+                      final why = c.shareError;
+                      if (why != null) messenger.showSnackBar(SnackBar(content: Text(why)));
+                    },
+                  ),
+                  IconButton(
+                    tooltip: 'Adjust',
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.tune, size: 20),
+                    onPressed: () => showAdjustSheet(context, c, item),
+                  ),
+                ],
               ),
             ),
             Column(
@@ -667,6 +683,10 @@ class _SpokenLineState extends State<_SpokenLine> {
 CueClip? _currentClip(CueItem item) =>
     item.clips.isEmpty ? null : item.clips[item.current.clamp(0, item.clips.length - 1)];
 
+/// The tiny sliders glyph on a take whose speed, pitch, pauses or volume were changed.
+Widget _adjustedMark(BuildContext context) =>
+    Icon(Icons.tune, size: 12, color: context.colors.clone, semanticLabel: 'Adjusted');
+
 /// ‹ n/m ›: picks which take Say it and Share use.
 Widget _takeSwitcher(BuildContext context, CueItem item, SpeakController controller) {
   final n = item.current.clamp(0, item.clips.length - 1);
@@ -683,6 +703,8 @@ Widget _takeSwitcher(BuildContext context, CueItem item, SpeakController control
     children: [
       arrow(Icons.chevron_left, 'Previous take', n - 1),
       Text('${n + 1}/${item.clips.length}', style: TextStyle(color: context.colors.muted, fontSize: 13)),
+      if (!controller.adjustOf(item).isDefault)
+        Padding(padding: const EdgeInsets.only(left: 2), child: _adjustedMark(context)),
       arrow(Icons.chevron_right, 'Next take', n + 1),
     ],
   );

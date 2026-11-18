@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fauxnetic/audio/marking.dart';
+import 'package:fauxnetic/audio/take_adjust.dart';
 import 'package:fauxnetic/cues/cue.dart';
 import 'package:fauxnetic/engine/voice_engine.dart';
 import 'package:fauxnetic/models/model_store.dart';
@@ -71,8 +73,25 @@ class FakeSpeakController extends SpeakController {
   var stops = 0;
   @override
   Future<void> stop() async => stops++;
+  var failShare = false;
   @override
-  Future<void> share(CueItem item) async => sharedIds.add(item.id);
+  Future<void> share(CueItem item) async {
+    sharedIds.add(item.id);
+    shareError = failShare ? MarkMissing.message : null;
+  }
+
+  final adjusted = <TakeAdjust>[];
+  @override
+  Future<void> adjust(CueItem item, TakeAdjust a) async {
+    adjusted.add(a);
+    items = [
+      for (final c in items)
+        c.id == item.id
+            ? c.copyWith(clips: [for (final (i, k) in c.clips.indexed) i == c.current ? k.withAdjust(a) : k])
+            : c,
+    ];
+    notifyListeners();
+  }
 
   @override
   Future<void> retry(CueItem item) async => retried.add(item.id);
@@ -446,6 +465,74 @@ void main() {
       final first = t.getRect(rows.at(0));
       final second = t.getRect(rows.at(1));
       expect((first.top - second.bottom).abs(), greaterThanOrEqualTo(8));
+    });
+  });
+
+  group('take adjustments', () {
+    CueItem withTake([TakeAdjust a = TakeAdjust.defaults]) => CueItem(
+      id: 'a',
+      personId: 'p1',
+      text: 'Adjust me.',
+      status: CueStatus.ready,
+      clips: [CueClip('cues/a-0.bin', 1, adjust: a)],
+    );
+    final glyph = find.byWidgetPredicate((w) => w is Icon && w.icon == Icons.tune && w.size == 12);
+
+    Future<FakeSpeakController> shown(WidgetTester t, [TakeAdjust a = TakeAdjust.defaults]) async {
+      final c = await pump(t);
+      c.setItems([withTake(a)]);
+      c.setShown('a');
+      await t.pump();
+      return c;
+    }
+
+    testWidgets("the Adjust button opens the panel with the take's settings", (t) async {
+      await shown(t);
+      await t.tap(inDock(find.byTooltip('Adjust')));
+      await t.pumpAndSettle();
+      for (final s in ['Speed', 'Pitch', 'Pauses', 'Volume', 'Even out loudness', 'Reset']) {
+        expect(find.text(s), findsOneWidget, reason: s);
+      }
+      expect(find.text('1.0×'), findsNWidgets(2), reason: 'speed and pauses');
+      expect(find.text('0 st'), findsOneWidget);
+      expect(find.text('0 dB'), findsOneWidget);
+    });
+
+    testWidgets('moving Speed saves it on release', (t) async {
+      final c = await shown(t);
+      await t.tap(inDock(find.byTooltip('Adjust')));
+      await t.pumpAndSettle();
+      await t.drag(find.byKey(const Key('adjust-speed')), const Offset(60, 0));
+      await t.pumpAndSettle();
+      expect(c.adjusted, hasLength(1));
+      expect(c.adjusted.single.speed, greaterThan(1));
+    });
+
+    testWidgets('Reset restores defaults', (t) async {
+      final c = await shown(t, const TakeAdjust(speed: 1.25, pitch: 2));
+      await t.tap(inDock(find.byTooltip('Adjust')));
+      await t.pumpAndSettle();
+      expect(find.text('1.25×'), findsOneWidget);
+      await t.tap(find.text('Reset'));
+      await t.pumpAndSettle();
+      expect(c.adjusted.last, TakeAdjust.defaults);
+      expect(find.text('0 st'), findsOneWidget);
+    });
+
+    testWidgets('an adjusted take shows the glyph, a default one does not', (t) async {
+      final c = await shown(t);
+      expect(inDock(glyph), findsNothing);
+      c.setItems([withTake(const TakeAdjust(pauses: 1.5))]);
+      await t.pump();
+      expect(inDock(glyph), findsOneWidget);
+    });
+
+    testWidgets('a refused share shows why', (t) async {
+      final c = await shown(t);
+      c.failShare = true;
+      await t.tap(inDock(find.byTooltip('Share')));
+      await t.pump();
+      expect(find.text(MarkMissing.message), findsOneWidget);
     });
   });
 
