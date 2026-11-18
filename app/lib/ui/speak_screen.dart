@@ -585,7 +585,9 @@ Widget _removable(BuildContext context, CueItem item, SpeakController controller
     color: context.colors.rule,
     child: const Text('Remove'),
   ),
-  child: child,
+  // Dismissible stacks the row on its background, which would let a short line shrink to its words;
+  // full width keeps the whole row tappable and highlighted.
+  child: SizedBox(width: double.infinity, child: child),
 );
 
 /// One line in the list. Tapping a line with audio selects it into the dock's player (again: back to

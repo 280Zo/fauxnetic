@@ -230,6 +230,17 @@ void main() {
     expect(find.byType(TextField), findsOneWidget);
   });
 
+  testWidgets('a short line can be tapped anywhere across its row, not just on its words', (t) async {
+    final c = await pump(t);
+    c.setItems([cue('a', CueStatus.ready, 'Hi.')]);
+    await t.pump();
+    final words = t.getRect(find.text('Hi.'));
+    final list = t.getRect(find.byType(ListView));
+    await t.tapAt(Offset(list.right - 30, words.center.dy));
+    await t.pump();
+    expect(c.selectedIds, ['a']);
+  });
+
   testWidgets('tapping the selected line again goes back to typing', (t) async {
     final c = await pump(t);
     c.setItems([cue('a', CueStatus.ready, 'One.')]);
