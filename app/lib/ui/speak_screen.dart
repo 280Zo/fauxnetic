@@ -136,11 +136,16 @@ class _SpeakScreenState extends State<SpeakScreen> {
                         ),
                       )
                     // Reversed: the newest line sits at the bottom, by the dock, and the list
-                    // opens scrolled there.
-                    : ListView(
-                        reverse: true,
-                        padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
-                        children: [for (final item in c.items.reversed) _CueRow(item: item, controller: c)],
+                    // opens scrolled there. A tap between or beside the lines goes back to typing
+                    // (a tap on a line is the line's own).
+                    : GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: c.shown == null ? null : c.newLine,
+                        child: ListView(
+                          reverse: true,
+                          padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                          children: [for (final item in c.items.reversed) _CueRow(item: item, controller: c)],
+                        ),
                       ),
               ),
               _Dock(controller: c, compose: _compose(context)),
@@ -204,8 +209,11 @@ class _Tools extends StatelessWidget {
 /// "Model Qwen3-TTS ▾". Picking a model that isn't downloaded shows its size and licence note
 /// first, then downloads it; the choice applies from the next line and is kept for this voice.
 class _ModelPicker extends StatelessWidget {
-  const _ModelPicker({required this.controller});
+  const _ModelPicker({required this.controller, this.label = true});
   final SpeakController controller;
+
+  /// The "Model" caption; the player leaves it out to fit Re-generate on one line.
+  final bool label;
 
   Future<void> _pick(BuildContext context, String id) async {
     final c = controller;
@@ -252,8 +260,10 @@ class _ModelPicker extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text('Model', style: TextStyle(color: context.colors.muted, fontSize: 12)),
-        const SizedBox(width: 6),
+        if (label) ...[
+          Text('Model', style: TextStyle(color: context.colors.muted, fontSize: 12)),
+          const SizedBox(width: 6),
+        ],
         PopupMenuButton<String>(
           tooltip: 'Choose the voice model',
           onSelected: (id) => _pick(context, id),
@@ -463,35 +473,32 @@ class _Player extends StatelessWidget {
           height: 32,
           child: Row(
             children: [
-              Expanded(
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: IconButton(
-                    tooltip: 'Report this line',
-                    visualDensity: VisualDensity.compact,
-                    icon: Icon(Icons.flag_outlined, size: 18, color: context.colors.muted),
-                    onPressed: () async {
-                      final messenger = ScaffoldMessenger.of(context);
-                      if (!await c.report(item)) {
-                        messenger.showSnackBar(
-                          const SnackBar(content: Text('No email app found. Send reports to $kReportEmail.')),
-                        );
-                      }
-                    },
-                  ),
-                ),
-              ),
               if (item.clips.length > 1) _takeSwitcher(context, item, c),
+              // Model and Re-generate shrink together rather than wrap on a narrow phone.
               Expanded(
                 child: Align(
                   alignment: Alignment.centerRight,
-                  child: TextButton(
-                    onPressed: () => c.tryAgain(item),
-                    style: TextButton.styleFrom(
-                      foregroundColor: context.colors.clone,
-                      visualDensity: VisualDensity.compact,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _ModelPicker(controller: c, label: false),
+                        TextButton(
+                          onPressed: () => c.tryAgain(item),
+                          style: TextButton.styleFrom(
+                            foregroundColor: context.colors.clone,
+                            visualDensity: VisualDensity.compact,
+                          ),
+                          child: const Text(
+                            '↻ Re-generate',
+                            maxLines: 1,
+                            softWrap: false,
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      ],
                     ),
-                    child: const Text('↻ Re-generate', style: TextStyle(fontWeight: FontWeight.w700)),
                   ),
                 ),
               ),
@@ -522,27 +529,63 @@ class _Player extends StatelessWidget {
         Expanded(
           child: _Waveform(peaks: c.waveform, progress: progress),
         ),
+        // Share and Report at the left, play in the center under its time, New at the right.
         Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            IconButton.filled(
-              tooltip: playing ? 'Stop' : 'Play',
-              style: IconButton.styleFrom(backgroundColor: context.colors.clone, foregroundColor: context.colors.paper),
-              icon: Icon(playing ? Icons.stop : Icons.play_arrow),
-              onPressed: () => playing ? c.stop() : c.play(item),
+            Expanded(
+              child: Row(
+                children: [
+                  IconButton(
+                    tooltip: 'Share',
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.share_outlined, size: 20),
+                    onPressed: () => c.share(item),
+                  ),
+                  IconButton(
+                    tooltip: 'Report this line',
+                    visualDensity: VisualDensity.compact,
+                    icon: Icon(Icons.flag_outlined, size: 18, color: context.colors.muted),
+                    onPressed: () async {
+                      final messenger = ScaffoldMessenger.of(context);
+                      if (!await c.report(item)) {
+                        messenger.showSnackBar(
+                          const SnackBar(content: Text('No email app found. Send reports to $kReportEmail.')),
+                        );
+                      }
+                    },
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(width: 8),
-            Text('${_clock(playing ? c.playedSeconds : 0)} / ${_clock(length)}', style: muted),
-            const Spacer(),
-            TextButton(
-              onPressed: c.newLine,
-              style: TextButton.styleFrom(foregroundColor: context.colors.clone),
-              child: const Text('✎ New', style: TextStyle(fontWeight: FontWeight.w700)),
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '${_clock(playing ? c.playedSeconds : 0)} / ${_clock(length)}',
+                  style: muted.copyWith(fontSize: 12),
+                ),
+                IconButton.filled(
+                  tooltip: playing ? 'Stop' : 'Play',
+                  visualDensity: VisualDensity.compact,
+                  style: IconButton.styleFrom(
+                    backgroundColor: context.colors.clone,
+                    foregroundColor: context.colors.paper,
+                  ),
+                  icon: Icon(playing ? Icons.stop : Icons.play_arrow),
+                  onPressed: () => playing ? c.stop() : c.play(item),
+                ),
+              ],
             ),
-            IconButton(
-              tooltip: 'Share',
-              visualDensity: VisualDensity.compact,
-              icon: const Icon(Icons.share_outlined, size: 20),
-              onPressed: () => c.share(item),
+            Expanded(
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: c.newLine,
+                  style: TextButton.styleFrom(foregroundColor: context.colors.clone),
+                  child: const Text('✎ New', style: TextStyle(fontWeight: FontWeight.w700)),
+                ),
+              ),
             ),
           ],
         ),
@@ -575,19 +618,23 @@ Widget _takeSwitcher(BuildContext context, CueItem item, SpeakController control
   );
 }
 
-Widget _removable(BuildContext context, CueItem item, SpeakController controller, Widget child) => Dismissible(
-  key: ValueKey(item.id),
-  direction: DismissDirection.endToStart,
-  onDismissed: (_) => controller.remove(item),
-  background: Container(
-    alignment: Alignment.centerRight,
-    padding: const EdgeInsets.only(right: 16),
-    color: context.colors.rule,
-    child: const Text('Remove'),
+/// A line's card, 8 apart from the next, that swipes left to remove.
+Widget _removable(BuildContext context, CueItem item, SpeakController controller, Widget child) => Padding(
+  padding: const EdgeInsets.symmetric(vertical: 4),
+  child: Dismissible(
+    key: ValueKey(item.id),
+    direction: DismissDirection.endToStart,
+    onDismissed: (_) => controller.remove(item),
+    background: Container(
+      alignment: Alignment.centerRight,
+      padding: const EdgeInsets.only(right: 16),
+      decoration: BoxDecoration(color: context.colors.rule, borderRadius: BorderRadius.circular(12)),
+      child: const Text('Remove'),
+    ),
+    // Dismissible stacks the row on its background, which would let a short line shrink to its
+    // words; full width keeps the whole card tappable and highlighted.
+    child: SizedBox(width: double.infinity, child: child),
   ),
-  // Dismissible stacks the row on its background, which would let a short line shrink to its words;
-  // full width keeps the whole row tappable and highlighted.
-  child: SizedBox(width: double.infinity, child: child),
 );
 
 /// One line in the list. Tapping a line with audio selects it into the dock's player (again: back to
@@ -618,51 +665,58 @@ class _CueRow extends StatelessWidget {
       context,
       item,
       c,
-      InkWell(
-        key: selected ? Key('selected-${item.id}') : null,
-        onTap: onTap,
-        child: Container(
-          decoration: BoxDecoration(
-            color: selected ? context.colors.clone.withValues(alpha: 0.08) : null,
-            border: Border(
-              left: BorderSide(color: selected ? context.colors.clone : Colors.transparent, width: 3),
-              top: BorderSide(color: context.colors.rule),
-            ),
-          ),
-          padding: const EdgeInsets.fromLTRB(8, 10, 4, 10),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(item.text, style: TextStyle(color: played && !selected ? context.colors.muted : context.colors.ink)),
-              if (item.status == CueStatus.failed && item.error != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text('${item.error} Tap to retry.', style: TextStyle(color: statusColor, fontSize: 13)),
-                )
-              else if (!item.hasClip)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text(c.statusOf(item), style: TextStyle(color: statusColor, fontSize: 13)),
-                )
-              else if (takes > 1)
-                Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Text('$takes takes', style: TextStyle(color: context.colors.muted, fontSize: 12)),
-                ),
-              if (making)
-                Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(2),
-                    child: LinearProgressIndicator(
-                      value: c.progressOf(item),
-                      minHeight: 3,
-                      color: context.colors.muted,
-                      backgroundColor: context.colors.rule,
-                    ),
+      ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Material(
+          color: selected
+              ? Color.alphaBlend(context.colors.clone.withValues(alpha: 0.12), context.colors.card)
+              : context.colors.card,
+          child: InkWell(
+            key: selected ? Key('selected-${item.id}') : null,
+            onTap: onTap,
+            child: Container(
+              decoration: BoxDecoration(
+                border: Border(left: BorderSide(color: selected ? context.colors.clone : Colors.transparent, width: 3)),
+              ),
+              padding: const EdgeInsets.fromLTRB(10, 10, 8, 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item.text,
+                    style: TextStyle(color: played && !selected ? context.colors.muted : context.colors.ink),
                   ),
-                ),
-            ],
+                  if (item.status == CueStatus.failed && item.error != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text('${item.error} Tap to retry.', style: TextStyle(color: statusColor, fontSize: 13)),
+                    )
+                  else if (!item.hasClip)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(c.statusOf(item), style: TextStyle(color: statusColor, fontSize: 13)),
+                    )
+                  else if (takes > 1)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text('$takes takes', style: TextStyle(color: context.colors.muted, fontSize: 12)),
+                    ),
+                  if (making)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(2),
+                        child: LinearProgressIndicator(
+                          value: c.progressOf(item),
+                          minHeight: 3,
+                          color: context.colors.muted,
+                          backgroundColor: context.colors.rule,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
           ),
         ),
       ),

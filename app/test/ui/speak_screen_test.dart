@@ -357,6 +357,90 @@ void main() {
     expect(c.sharedIds, ['a']);
   });
 
+  group('player layout (owner, 2026-11-18)', () {
+    CueItem twoTakes() => const CueItem(
+      id: 'a',
+      personId: 'p1',
+      text: 'Two takes.',
+      status: CueStatus.ready,
+      clips: [CueClip('cues/a-0.bin', 1), CueClip('cues/a-1.bin', 2)],
+      current: 1,
+    );
+
+    Future<FakeSpeakController> narrow(WidgetTester t) async {
+      // Test text is drawn as wide squares (about 1.5× the app's font), so 440 here is tighter than a
+      // real 360 dp phone; the top row has to shrink to fit.
+      t.view.physicalSize = const Size(440, 760);
+      t.view.devicePixelRatio = 1;
+      addTearDown(t.view.reset);
+      final c = await pump(t);
+      c.setItems([twoTakes()]);
+      c.setShown('a');
+      await t.pump();
+      return c;
+    }
+
+    testWidgets('top row: takes at the far left, then the model picker and a one-line Re-generate', (t) async {
+      await narrow(t);
+      final takes = t.getRect(inDock(find.byTooltip('Previous take')));
+      final model = t.getRect(inDock(find.byTooltip('Choose the voice model')));
+      final regen = t.getRect(inDock(find.text('↻ Re-generate')));
+      final dock = t.getRect(find.byKey(const Key('dock')));
+      expect(takes.left - dock.left, lessThan(40));
+      expect(takes.right, lessThan(model.left));
+      expect(model.right, lessThanOrEqualTo(regen.left));
+      expect(regen.height, lessThan(24), reason: 'one line');
+      expect(regen.right, lessThanOrEqualTo(dock.right));
+      expect(inDock(find.text('Model')), findsNothing, reason: 'no label in the player');
+    });
+
+    testWidgets('picking a model in the player sets the voice model for the next take', (t) async {
+      final c = await narrow(t);
+      c.ready.add('voxcpm');
+      await t.tap(inDock(find.text('Qwen3-TTS')));
+      await t.pumpAndSettle();
+      await t.tap(find.text('VoxCPM 2').last);
+      await t.pumpAndSettle();
+      expect(c.modelEvents, ['load voxcpm', 'model voxcpm']);
+      expect(c.retriedIds, isEmpty, reason: 'picking does not re-generate by itself');
+    });
+
+    testWidgets('bottom row: Share and Report left, play centered under its time, New right', (t) async {
+      await narrow(t);
+      final dock = t.getRect(find.byKey(const Key('dock')));
+      final share = t.getRect(inDock(find.byTooltip('Share')));
+      final report = t.getRect(inDock(find.byTooltip('Report this line')));
+      final play = t.getRect(inDock(find.byTooltip('Play')));
+      final time = t.getRect(inDock(find.textContaining(' / ')));
+      final newer = t.getRect(inDock(find.text('✎ New')));
+      expect(share.left - dock.left, lessThan(40));
+      expect(report.center.dy, closeTo(share.center.dy, 1));
+      expect(play.center.dx, closeTo(dock.center.dx, 2));
+      expect(time.bottom, lessThanOrEqualTo(play.top));
+      expect(time.center.dx, closeTo(play.center.dx, 2));
+      expect(dock.right - newer.right, lessThan(40));
+    });
+
+    testWidgets('tapping outside the lines and the player goes back to typing', (t) async {
+      final c = await narrow(t);
+      final list = t.getRect(find.byType(ListView));
+      await t.tapAt(Offset(list.center.dx, list.top + 10)); // empty space above the only line
+      await t.pump();
+      expect(c.newLines, 1);
+      expect(inDock(find.text('Generate')), findsOneWidget);
+    });
+
+    testWidgets('lines are separate cards with a gap between them', (t) async {
+      final c = await pump(t);
+      c.setItems([cue('a', CueStatus.ready, 'One.'), cue('b', CueStatus.ready, 'Two.')]);
+      await t.pump();
+      final rows = find.byType(Dismissible);
+      final first = t.getRect(rows.at(0));
+      final second = t.getRect(rows.at(1));
+      expect((first.top - second.bottom).abs(), greaterThanOrEqualTo(8));
+    });
+  });
+
   testWidgets('a take shows which engine made it', (t) async {
     final c = await pump(t);
     c.setItems([
