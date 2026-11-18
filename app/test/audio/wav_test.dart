@@ -10,6 +10,11 @@ void main() {
     expect(wavSeconds(wav), closeTo(3.0, 1e-9));
   });
 
+  test('reads the sample rate', () {
+    expect(wavSampleRate(encodeWav(Float32List(10), 48000)), 48000);
+    expect(wavSampleRate(encodeWav(Float32List(10), 24000)), 24000);
+  });
+
   test('samples are clamped to 16-bit range', () {
     final wav = encodeWav(Float32List.fromList([2.0, -2.0, 0.5]), 16000);
     final data = ByteData.sublistView(wav, 44);

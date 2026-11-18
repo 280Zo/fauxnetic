@@ -70,6 +70,21 @@ List<double> wavPeaks(List<int> wav, int bins) {
   return top == 0 ? peaks : peaks.map((p) => p / top).toList();
 }
 
+/// Sample rate of a RIFF/WAVE file, from its fmt chunk.
+int wavSampleRate(List<int> bytes) {
+  final u = bytes is Uint8List ? bytes : Uint8List.fromList(bytes);
+  final b = ByteData.sublistView(u);
+  var o = 12;
+  while (o + 8 <= u.length) {
+    final size = b.getUint32(o + 4, Endian.little);
+    if (String.fromCharCodes(u.sublist(o, o + 4)) == 'fmt ' && o + 16 <= u.length) {
+      return b.getUint32(o + 12, Endian.little);
+    }
+    o += 8 + size + (size.isOdd ? 1 : 0);
+  }
+  throw const FormatException('WAV without fmt chunk');
+}
+
 /// Duration of a RIFF/WAVE file, read from its fmt and data chunks.
 double wavSeconds(List<int> bytes) {
   final u = bytes is Uint8List ? bytes : Uint8List.fromList(bytes);
