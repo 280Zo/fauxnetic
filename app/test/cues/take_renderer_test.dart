@@ -86,6 +86,32 @@ void main() {
     expect(embeds, hasLength(1));
   });
 
+  test('two requests at once render once', () async {
+    final r = renderer();
+    await Future.wait([r.wav(line), r.wav(line)]);
+    expect(embeds, hasLength(1));
+  });
+
+  test('a failed mark check is remembered, not rendered again', () async {
+    final r = renderer(score: 0.5);
+    await expectLater(r.wav(line), throwsA(isA<MarkMissing>()));
+    await expectLater(r.wav(line), throwsA(isA<MarkMissing>()));
+    expect(embeds, hasLength(1));
+  });
+
+  test('forget drops the kept audio of a line', () async {
+    final r = renderer();
+    await r.wav(line);
+    r.forget(line.id);
+    await r.wav(line);
+    expect(embeds, hasLength(2));
+  });
+
+  test('a take with no audio is refused clearly', () async {
+    final empty = CueItem(id: 'x', personId: 'p1', text: 'Hi.', status: CueStatus.ready);
+    await expectLater(renderer().wav(empty), throwsStateError);
+  });
+
   test('another take or new settings render again', () async {
     final r = renderer();
     await r.wav(line);

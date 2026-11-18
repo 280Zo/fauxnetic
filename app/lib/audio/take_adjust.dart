@@ -11,12 +11,16 @@ class TakeAdjust {
     double gainDb = 0,
     bool normalize = true,
   }) => TakeAdjust(
-    speed: speed.clamp(minSpeed, maxSpeed).toDouble(),
-    pitch: pitch.clamp(-maxPitch, maxPitch).toDouble(),
-    pauses: pauses.clamp(minPauses, maxPauses).toDouble(),
-    gainDb: gainDb.clamp(minGainDb, maxGainDb).toDouble(),
+    speed: _snap(speed.clamp(minSpeed, maxSpeed).toDouble(), 20),
+    pitch: _snap(pitch.clamp(-maxPitch, maxPitch).toDouble(), 2),
+    pauses: _snap(pauses.clamp(minPauses, maxPauses).toDouble(), 10),
+    gainDb: _snap(gainDb.clamp(minGainDb, maxGainDb).toDouble(), 1),
     normalize: normalize,
   );
+
+  /// [v] on the slider's grid of 1/[perUnit] steps (speed 0.05, pitch 0.5, pauses 0.1, volume 1),
+  /// so a slider dragged back to the middle is exactly the default.
+  static double _snap(double v, int perUnit) => (v * perUnit).round() / perUnit;
 
   static const minSpeed = 0.75, maxSpeed = 1.5;
   static const maxPitch = 3.0;

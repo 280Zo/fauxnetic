@@ -97,6 +97,13 @@ class BrokenRenderer extends TakeRenderer {
   Future<Uint8List> wav(CueItem item) async => throw StateError('isolate failed');
 }
 
+class ForgettingRenderer extends TakeRenderer {
+  ForgettingRenderer(CueRepo cues) : super(cues, PassMarker.new, run: syncRun);
+  final forgotten = <String>[];
+  @override
+  void forget(String id) => forgotten.add(id);
+}
+
 R syncRun<R>(R Function() f) => f();
 
 void main() {
@@ -374,6 +381,14 @@ void main() {
       player.finish();
       await Future<void>.delayed(const Duration(milliseconds: 50));
       expect(player.played, hasLength(2));
+    });
+
+    test('removing a line drops its kept audio', () async {
+      final r = ForgettingRenderer(cues);
+      final c = await adjusting(renderer: r);
+      final item = await oneLine(c);
+      await c.remove(item);
+      expect(r.forgotten, [item.id]);
     });
 
     test('a failed mark shares nothing and says why', () async {

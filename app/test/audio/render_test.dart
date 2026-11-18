@@ -48,6 +48,18 @@ void main() {
     expect((out.length - x.length) / r, closeTo(0.3, 0.02));
   });
 
+  test('a lengthened pause repeats its middle, not the end of the word before it', () {
+    // The pause starts with the word's quiet tail (a soft tone), then real silence.
+    final x = join([tone(0.4, r), tone(0.1, r, amp: 0.004), silence(0.3, r), tone(0.4, r)]);
+    final out = scalePauses(x, r, 2.5);
+    final a = (0.4 * r).round(), b = out.length - (0.4 * r).round();
+    var tail = 0;
+    for (var i = a + (0.1 * r).round(); i < b - 1; i++) {
+      if (out[i].abs() > 0.001) tail++;
+    }
+    expect(tail / r, lessThan(0.02), reason: 'the tail is not replayed inside the pause');
+  });
+
   test('scalePauses never shortens below 80 ms', () {
     final x = join([tone(0.4, r), silence(0.12, r), tone(0.4, r)]);
     final out = scalePauses(x, r, 0.5);

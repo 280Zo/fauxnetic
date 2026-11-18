@@ -117,43 +117,58 @@ Float32List scalePauses(Float32List pcm, int rate, double factor, {List<String> 
   }
   if (edits.isEmpty) return pcm;
   edits.sort((x, y) => x.$1.compareTo(y.$1));
-  final out = <double>[];
-  var copied = 0;
+  final kept = <(int, int, int)>[];
+  var end = 0;
+  for (final e in edits) {
+    if (e.$1 < end) continue;
+    kept.add(e);
+    end = e.$2;
+  }
+  // Size the result first, so it is built in one Float32List (a 20 s take at 48 kHz would
+  // otherwise box about a million doubles).
+  final out = Float32List(pcm.length + kept.fold(0, (n, e) => n + e.$3 - (e.$2 - e.$1)));
+  var o = 0, copied = 0;
+  void copy(int from, int to) {
+    out.setRange(o, o + to - from, pcm, from);
+    o += to - from;
+  }
+
   final fade = (0.01 * rate).round();
-  for (final (a, b, target) in edits) {
-    if (a < copied) continue;
-    out.addAll(pcm.sublist(copied, a));
+  for (final (a, b, target) in kept) {
+    copy(copied, a);
     final length = b - a;
     if (length == 0) {
       // Fade the sound out into the added silence and back in after it.
-      for (var k = 0; k < math.min(fade, out.length); k++) {
-        out[out.length - 1 - k] *= k / fade;
+      for (var k = 0; k < math.min(fade, o); k++) {
+        out[o - 1 - k] *= k / fade;
       }
-      out.addAll(List<double>.filled(target, 0));
-      final resume = out.length;
-      out.addAll(pcm.sublist(a, math.min(pcm.length, a + fade)));
-      for (var k = 0; k < out.length - resume; k++) {
+      o += target; // already zeros
+      final resume = o, until = math.min(pcm.length, a + fade);
+      copy(a, until);
+      for (var k = 0; k < o - resume; k++) {
         out[resume + k] *= k / fade;
       }
-      copied = math.min(pcm.length, a + fade);
+      copied = until;
       continue;
     }
     final mid = a + length ~/ 2;
     if (target >= length) {
-      out.addAll(pcm.sublist(a, mid));
+      copy(a, mid);
+      // Repeat the pause's middle half: its ends can hold the tail of a word.
+      final lo = a + length ~/ 4, span = math.max(1, length ~/ 2);
       for (var k = 0; k < target - length; k++) {
-        out.add(pcm[a + k % length]);
+        out[o++] = pcm[lo + k % span];
       }
-      out.addAll(pcm.sublist(mid, b));
+      copy(mid, b);
     } else {
       final cut = length - target;
-      out.addAll(pcm.sublist(a, mid - cut ~/ 2));
-      out.addAll(pcm.sublist(mid - cut ~/ 2 + cut, b));
+      copy(a, mid - cut ~/ 2);
+      copy(mid - cut ~/ 2 + cut, b);
     }
     copied = b;
   }
-  out.addAll(pcm.sublist(copied));
-  return Float32List.fromList(out);
+  copy(copied, pcm.length);
+  return out;
 }
 
 /// [pcm] scaled so its speech (the frames within 35 dB of the loudest) has an RMS of -16 dBFS.

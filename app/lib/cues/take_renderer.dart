@@ -21,26 +21,49 @@ class TakeRenderer {
   final Marker Function() _marker;
   final FutureOr<R> Function<R>(R Function()) _run;
 
-  String? _key;
+  // The last result (audio, or a failed mark check as null) and the line it belongs to.
+  String? _key, _line;
   Uint8List? _wav;
+  final _inflight = <String, Future<Uint8List?>>{};
 
   /// The rendered, re-marked WAV of [item]'s shown take. Throws [MarkMissing] when the watermark
-  /// can't be confirmed afterwards.
+  /// can't be confirmed afterwards, and [StateError] for a line with no take.
   Future<Uint8List> wav(CueItem item) async {
+    if (item.clips.isEmpty) throw StateError('line ${item.id} has no take');
     final take = item.clips[item.current.clamp(0, item.clips.length - 1)];
     final key = '${take.file}|${take.adjust.toJson()}';
-    if (key == _key && _wav != null) return _wav!;
+    final Uint8List? out;
+    if (key == _key) {
+      out = _wav;
+    } else {
+      // A second request for the same take while it renders waits for that render.
+      // (A block body: returning the removed future would make whenComplete wait for itself.)
+      out = await (_inflight[key] ??= _renderNow(item, take.adjust).whenComplete(() {
+        _inflight.remove(key);
+      }));
+      _key = key;
+      _line = item.id;
+      _wav = out;
+    }
+    if (out == null) throw const MarkMissing();
+    return out;
+  }
+
+  /// Drops what is kept for line [id] (it was removed).
+  void forget(String id) {
+    if (_line != id) return;
+    _key = _line = _wav = null;
+  }
+
+  Future<Uint8List?> _renderNow(CueItem item, TakeAdjust adjust) async {
     final bytes = Uint8List.fromList(await _cues.clipBytes(item));
     final marker = _marker;
-    final adjust = take.adjust;
     final words = item.text.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
     final watch = Stopwatch()..start();
     final out = await _run(() => _render(bytes, adjust, words, marker));
-    // On the phone's log (no text of the line): how long a take takes to render.
-    debugPrint('Fauxnetic render: ${watch.elapsedMilliseconds} ms for ${wavSeconds(bytes).toStringAsFixed(1)} s');
-    if (out == null) throw const MarkMissing();
-    _key = key;
-    _wav = out;
+    if (kDebugMode) {
+      debugPrint('Fauxnetic render: ${watch.elapsedMilliseconds} ms for ${wavSeconds(bytes).toStringAsFixed(1)} s');
+    }
     return out;
   }
 }

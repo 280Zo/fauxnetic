@@ -21,6 +21,15 @@ void main() {
     expect(a.gainDb, 20, reason: 'owner: a much higher volume max');
   });
 
+  test('values snap to the slider steps', () {
+    final a = TakeAdjust.clamped(speed: 1.0000001, pitch: 0.24, pauses: 1.0499, gainDb: 2.6);
+    expect(a.speed, 1.0);
+    expect(a.pitch, 0.0);
+    expect(a.pauses, 1.0);
+    expect(a.gainDb, 3.0);
+    expect(TakeAdjust.clamped(speed: 1 + 1e-9).isDefault, isTrue, reason: 'back at the middle counts as default');
+  });
+
   test('values from storage are clamped too', () {
     expect(TakeAdjust.fromJson({'speed': 9, 'gainDb': -40}).speed, 1.5);
     expect(TakeAdjust.fromJson({'speed': 9, 'gainDb': -40}).gainDb, -12);

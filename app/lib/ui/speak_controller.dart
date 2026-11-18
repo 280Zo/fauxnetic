@@ -411,6 +411,7 @@ class CueSpeakController extends SpeakController {
     if (shownId == item.id) shownId = null;
     notifyListeners();
     await _cues.remove(item.id);
+    renderer?.forget(item.id);
     // If it was being made, stop the engine now rather than finish a line nobody wants.
     await _preparer.cancelIfGone();
     await refresh();
