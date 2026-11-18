@@ -49,14 +49,15 @@ class ShareService {
     return '${_safe(personName)}-AI-$model-v${c.current.clamp(0, c.clips.length - 1) + 1}-$stamp.wav';
   }
 
-  /// Returns false, sharing nothing, when the line has no clip or it has expired.
-  Future<bool> share(CueItem c, String personName) async {
+  /// Returns false, sharing nothing, when the line has no clip or it has expired. [bytes] gives the
+  /// audio to send (the take as adjusted); the stored clip when null.
+  Future<bool> share(CueItem c, String personName, {Future<List<int>> Function(CueItem c)? bytes}) async {
     if (!c.hasClip || isExpired(c, _clock())) return false;
-    final bytes = await _cues.clipBytes(c);
+    final data = await (bytes ?? _cues.clipBytes)(c);
     await shareDir.create(recursive: true);
     final file = File('${shareDir.path}/${fileName(c, personName)}');
     try {
-      await file.writeAsBytes(bytes, flush: true);
+      await file.writeAsBytes(data, flush: true);
       await _sink(file);
     } finally {
       if (await file.exists()) await file.delete();

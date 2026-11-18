@@ -1,7 +1,12 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fauxnetic/audio/marking.dart';
+import 'package:fauxnetic/audio/take_adjust.dart';
+import 'package:fauxnetic/audio/wav.dart';
+import 'package:fauxnetic/cues/take_renderer.dart';
 
 import '../support/keys.dart';
 import '../support/people.dart';
@@ -32,12 +37,16 @@ class NoKeeper implements BackgroundKeeper {
 class FakeClipPlayer implements ClipPlayer {
   final events = <String>[];
   final played = <String>[];
+  final playedBytes = <int>[];
+  final froms = <Duration>[];
   Completer<bool>? _current;
 
   @override
-  Future<bool> play(File f) {
+  Future<bool> play(File f, {Duration from = Duration.zero}) {
     events.add('play');
     played.add(f.path);
+    playedBytes.add(f.lengthSync());
+    froms.add(from);
     _current = Completer<bool>();
     return _current!.future;
   }
@@ -58,12 +67,30 @@ class FakeClipPlayer implements ClipPlayer {
 
 class ThrowingPlayer implements ClipPlayer {
   @override
-  Future<bool> play(File f) async => throw StateError('audio device busy');
+  Future<bool> play(File f, {Duration from = Duration.zero}) async => throw StateError('audio device busy');
   @override
   Future<void> stop() async {}
   @override
   Stream<Duration> get position => const Stream.empty();
 }
+
+class PassMarker implements Marker {
+  PassMarker({this.score = 0.97});
+  final double score;
+  @override
+  Float32List embed(Float32List pcm) => pcm;
+  @override
+  double detect(Float32List pcm) => score;
+}
+
+/// Always hands back a 2 s WAV, whatever the take.
+class TwoSecondRenderer extends TakeRenderer {
+  TwoSecondRenderer(CueRepo cues) : super(cues, PassMarker.new);
+  @override
+  Future<Uint8List> wav(CueItem item) async => encodeWav(Float32List(48000), 24000);
+}
+
+R syncRun<R>(R Function() f) => f();
 
 void main() {
   late Directory dir;
@@ -215,6 +242,83 @@ void main() {
     expect(c.playingId, isNull);
     expect(c.shownId, c.items.single.id);
     expect(c.items.single.status, CueStatus.ready, reason: 'stopped early is not played');
+  });
+
+  group('take adjustments (2026-11-18)', () {
+    Future<CueSpeakController> adjusting({TakeRenderer? renderer}) async {
+      final c = CueSpeakController(
+        sam,
+        cues,
+        preparer,
+        player,
+        temp,
+        shares,
+        renderer: renderer ?? TakeRenderer(cues, PassMarker.new, run: syncRun),
+      );
+      await c.refresh();
+      return c;
+    }
+
+    // 4 s of sound, so speed changes show in the length.
+    setUp(() => engine.audio = (_) => Float32List.fromList(List.generate(96000, (i) => (i % 50) / 100.0)));
+
+    Future<CueItem> oneLine(CueSpeakController c) async {
+      await c.add('Hello there.');
+      await c.idle;
+      return c.items.single;
+    }
+
+    test('play and the waveform use the rendered take', () async {
+      final c = await adjusting(renderer: TwoSecondRenderer(cues));
+      final item = await oneLine(c);
+      await c.select(item);
+      expect(c.lengthSeconds, closeTo(2, 1e-6));
+      expect(c.wordStarts.last, lessThan(2));
+      unawaited(c.play(item));
+      await pumpUntil(() => player.played.length == 1);
+      expect(player.playedBytes.single, 44 + 48000 * 2);
+    });
+
+    test('adjust saves and re-renders', () async {
+      final c = await adjusting();
+      final item = await oneLine(c);
+      await c.select(item);
+      final before = c.lengthSeconds;
+      await c.adjust(item, const TakeAdjust(speed: 1.25));
+      expect(c.lengthSeconds, closeTo(before / 1.25, 0.05));
+      final again = await adjusting();
+      expect(again.adjustOf(again.items.single), const TakeAdjust(speed: 1.25));
+    });
+
+    test('resetAdjust returns to defaults', () async {
+      final c = await adjusting();
+      final item = await oneLine(c);
+      await c.adjust(item, const TakeAdjust(pitch: 2));
+      await c.resetAdjust(c.items.single);
+      expect(c.adjustOf(c.items.single), TakeAdjust.defaults);
+    });
+
+    test('adjusting while playing restarts at the same place', () async {
+      final c = await adjusting();
+      final item = await oneLine(c);
+      unawaited(c.play(item));
+      await pumpUntil(() => player.played.length == 1);
+      player.positions.add(const Duration(seconds: 2));
+      await pumpUntil(() => c.playedSeconds == 2);
+      await c.adjust(c.items.single, const TakeAdjust(speed: 1.25));
+      await pumpUntil(() => player.played.length == 2);
+      expect(player.events, ['play', 'stop', 'play']);
+      expect(player.froms.last.inMilliseconds / 1000, closeTo(2 / 1.25, 0.1));
+      expect(c.playingId, item.id);
+    });
+
+    test('a failed mark shares nothing and says why', () async {
+      final c = await adjusting(renderer: TakeRenderer(cues, () => PassMarker(score: 0.2), run: syncRun));
+      final item = await oneLine(c);
+      await c.share(item);
+      expect(shared, isEmpty);
+      expect(c.shareError, MarkMissing.message);
+    });
   });
 
   group('selection (Speak dock, 2026-11-18)', () {

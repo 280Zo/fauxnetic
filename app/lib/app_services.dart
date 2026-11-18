@@ -11,6 +11,8 @@ import 'cues/cue_repo.dart';
 import 'cues/preparer.dart';
 import 'cues/share.dart';
 import 'cues/speed_book.dart';
+import 'audio/marking.dart';
+import 'cues/take_renderer.dart';
 import 'engine/crispasr_engine.dart';
 import 'engine/tts_models.dart';
 import 'models/keep_alive.dart';
@@ -345,6 +347,7 @@ class AppServices {
       temp,
       shares,
       speeds: preparer.speeds,
+      renderer: TakeRenderer(cues, CrispMarker.new),
       memoryReader: () async {
         try {
           return parseMemAvailable(await File('/proc/meminfo').readAsString());

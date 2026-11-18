@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fauxnetic/audio/wav.dart';
@@ -65,6 +66,14 @@ void main() {
     await s.share(two, 'AJ');
     await s.share(two.copyWith(current: 0), 'AJ');
     expect(handed, ['AJ-AI-VoxCPM-2-small-v2-${stamp(later)}.wav', 'AJ-AI-Fauxnetic-v1-${stamp(now)}.wav']);
+  });
+
+  test('shares the rendered bytes', () async {
+    final custom = encodeWav(Float32List(4800), 24000);
+    var got = <int>[];
+    final s = ShareService(cues, shareDir, clock: () => now, sink: (f) async => got = f.readAsBytesSync());
+    await s.share(line, 'AJ', bytes: (_) async => custom);
+    expect(got, custom);
   });
 
   test('the file is deleted even when the share sheet fails', () async {

@@ -4,8 +4,8 @@ import 'dart:io';
 import 'package:just_audio/just_audio.dart';
 
 abstract class ClipPlayer {
-  /// Plays [f]; completes with true when it played to the end, false when stopped.
-  Future<bool> play(File f);
+  /// Plays [f] from [from]; completes with true when it played to the end, false when stopped.
+  Future<bool> play(File f, {Duration from = Duration.zero});
   Future<void> stop();
 
   /// How far into the clip playback is.
@@ -17,12 +17,12 @@ class JustAudioClipPlayer implements ClipPlayer {
   Completer<bool>? _active;
 
   @override
-  Future<bool> play(File f) async {
+  Future<bool> play(File f, {Duration from = Duration.zero}) async {
     final previous = _active;
     if (previous != null && !previous.isCompleted) previous.complete(false);
     final done = Completer<bool>();
     _active = done;
-    await _player.setFilePath(f.path);
+    await _player.setFilePath(f.path, initialPosition: from);
     final sub = _player.playerStateStream.listen((s) {
       if (s.processingState == ProcessingState.completed && !done.isCompleted) done.complete(true);
     });

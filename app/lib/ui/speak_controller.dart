@@ -5,7 +5,10 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 
 import '../audio/wav.dart';
+import '../audio/marking.dart';
+import '../audio/take_adjust.dart';
 import '../audio/word_timing.dart';
+import '../cues/take_renderer.dart';
 import '../cues/cue.dart';
 import '../cues/cue_repo.dart';
 import '../cues/preparer.dart';
@@ -77,8 +80,20 @@ abstract class SpeakController extends ChangeNotifier {
   /// Plays a line again; played lines keep their clip until cleared or 24 h after generation.
   Future<void> replay(CueItem item) => play(item);
 
-  /// Hands the line's audio to Android's share sheet.
+  /// Hands the line's audio to Android's share sheet, as adjusted.
   Future<void> share(CueItem item);
+
+  /// Why the last share sent nothing (its watermark couldn't be confirmed); null otherwise.
+  String? shareError;
+
+  /// The shown take's speed, pitch, pauses and volume.
+  TakeAdjust adjustOf(CueItem item) =>
+      item.clips.isEmpty ? TakeAdjust.defaults : item.clips[item.current.clamp(0, item.clips.length - 1)].adjust;
+
+  /// Saves [a] on the shown take; it plays and shares that way from now on.
+  Future<void> adjust(CueItem item, TakeAdjust a) async {}
+
+  Future<void> resetAdjust(CueItem item) => adjust(item, TakeAdjust.defaults);
 
   /// Generates the line again with a new seed (different audio); ignored for lines without a clip.
   Future<void> tryAgain(CueItem item);
@@ -175,6 +190,7 @@ class CueSpeakController extends SpeakController {
     this.models,
     this.speeds,
     this.memoryReader,
+    this.renderer,
   }) : _clock = clock ?? (() => DateTime.now().toUtc()) {
     final m = models;
     if (m != null) {
@@ -225,6 +241,37 @@ class CueSpeakController extends SpeakController {
 
   /// Reads the memory free now; null in tests that don't need it.
   final Future<int?> Function()? memoryReader;
+
+  /// Renders the shown take with its adjustments; null plays the stored clip as it is.
+  final TakeRenderer? renderer;
+
+  /// What plays and is measured: the rendered take, or the stored clip if its mark couldn't be
+  /// confirmed (Share refuses that case instead, see [share]).
+  Future<List<int>> _audio(CueItem item) async {
+    final r = renderer;
+    if (r == null) return _cues.clipBytes(item);
+    try {
+      return await r.wav(item);
+    } on MarkMissing {
+      return _cues.clipBytes(item);
+    }
+  }
+
+  @override
+  Future<void> adjust(CueItem item, TakeAdjust a) async {
+    final wasPlaying = playingId == item.id;
+    final at = playedSeconds, oldLength = lengthSeconds;
+    if (wasPlaying) await _stopIfPlaying(item);
+    final updated = await _cues.setAdjust(item.id, item.current, a);
+    await refresh();
+    if (updated == null) return;
+    if (shownId == item.id) await _loadShape(updated);
+    notifyListeners();
+    if (wasPlaying) {
+      final from = oldLength > 0 ? at * lengthSeconds / oldLength : 0.0;
+      unawaited(_play(updated, from: Duration(milliseconds: (from * 1000).round())));
+    }
+  }
 
   @override
   Future<int?> freeMemory() => memoryReader?.call() ?? Future.value();
@@ -314,7 +361,13 @@ class CueSpeakController extends SpeakController {
 
   @override
   Future<void> share(CueItem item) async {
-    if (!await _shares.share(item, person.name)) await _cues.enforceRetention(_clock());
+    shareError = null;
+    try {
+      final sent = await _shares.share(item, person.name, bytes: renderer?.wav);
+      if (!sent) await _cues.enforceRetention(_clock());
+    } on MarkMissing {
+      shareError = MarkMissing.message;
+    }
     await refresh();
   }
 
@@ -374,21 +427,19 @@ class CueSpeakController extends SpeakController {
 
   /// The shown take's waveform and length, read from its clip without playing it.
   Future<void> _loadShape(CueItem item) async {
-    File? clip;
     try {
-      clip = await _cues.decryptedClip(item, _temp);
-      _shape(item, await clip.readAsBytes());
+      _shape(item, await _audio(item));
     } catch (_) {
       _clearShape();
-    } finally {
-      if (clip != null) await _temp.release(clip);
     }
   }
 
   /// The newest tap always wins: the token is taken and the old clip stopped before any await,
   /// so two quick taps can never both play, and an interrupted line is never marked played.
   @override
-  Future<void> play(CueItem item) async {
+  Future<void> play(CueItem item) => _play(item);
+
+  Future<void> _play(CueItem item, {Duration from = Duration.zero}) async {
     if (!item.hasClip) return;
     final mine = ++_token;
     if (_busy) unawaited(_player.stop());
@@ -402,15 +453,17 @@ class CueSpeakController extends SpeakController {
     File? clip;
     var finished = false;
     try {
-      clip = await _cues.decryptedClip(item, _temp);
+      final bytes = await _audio(item);
       if (mine != _token) return;
-      _shape(item, await clip.readAsBytes());
+      clip = await _temp.create('.wav');
+      await clip.writeAsBytes(bytes, flush: true);
       if (mine != _token) return;
+      _shape(item, bytes);
       playingId = item.id;
       shownId = item.id;
-      playedSeconds = 0;
+      playedSeconds = from.inMilliseconds / 1000;
       notifyListeners();
-      finished = await _player.play(clip);
+      finished = await _player.play(clip, from: from);
     } catch (_) {
       finished = false;
     } finally {
