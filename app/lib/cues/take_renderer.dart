@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:isolate';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
+
 import '../audio/marking.dart';
 import '../audio/render.dart';
 import '../audio/take_adjust.dart';
@@ -32,7 +34,10 @@ class TakeRenderer {
     final bytes = Uint8List.fromList(await _cues.clipBytes(item));
     final marker = _marker;
     final adjust = take.adjust;
+    final watch = Stopwatch()..start();
     final out = await _run(() => _render(bytes, adjust, marker));
+    // On the phone's log (no text of the line): how long a take takes to render.
+    debugPrint('Fauxnetic render: ${watch.elapsedMilliseconds} ms for ${wavSeconds(bytes).toStringAsFixed(1)} s');
     if (out == null) throw const MarkMissing();
     _key = key;
     _wav = out;
