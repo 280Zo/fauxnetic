@@ -1,3 +1,4 @@
+import '../audio/take_adjust.dart';
 import '../recording/scripts.dart';
 
 enum CueStatus { queued, preparing, ready, played, failed }
@@ -6,7 +7,7 @@ const kRetention = Duration(hours: 24);
 
 /// One generated take of a line: its encrypted clip (relative to the app support directory) and seed.
 class CueClip {
-  const CueClip(this.file, this.seed, {this.engine, this.madeAt});
+  const CueClip(this.file, this.seed, {this.engine, this.madeAt, this.adjust = TakeAdjust.defaults});
   final String file;
   final int seed;
 
@@ -16,17 +17,26 @@ class CueClip {
   /// When the take was made (UTC); null for takes stored before 2026-11-18.
   final DateTime? madeAt;
 
+  /// How this take is played and shared (speed, pitch, pauses, volume).
+  final TakeAdjust adjust;
+
+  CueClip withAdjust(TakeAdjust a) => CueClip(file, seed, engine: engine, madeAt: madeAt, adjust: a);
+
   Map<String, Object?> toJson() => {
     'file': file,
     'seed': seed,
     'engine': ?engine,
     if (madeAt != null) 'madeAt': madeAt!.toIso8601String(),
+    if (!adjust.isDefault) 'adjust': adjust.toJson(),
   };
   factory CueClip.fromJson(Map<String, Object?> j) => CueClip(
     j['file']! as String,
     j['seed']! as int,
     engine: j['engine'] as String?,
     madeAt: j['madeAt'] is String ? DateTime.tryParse(j['madeAt']! as String) : null,
+    adjust: j['adjust'] is Map
+        ? TakeAdjust.fromJson((j['adjust']! as Map).cast<String, Object?>())
+        : TakeAdjust.defaults,
   );
 }
 

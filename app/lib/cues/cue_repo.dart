@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import '../audio/take_adjust.dart';
 import '../recording/scripts.dart';
 import '../storage/temp_sweeper.dart';
 import '../storage/vault.dart';
@@ -119,6 +120,20 @@ class CueRepo {
             ? c.copyWith(status: CueStatus.queued, seed: seed, attempts: 0, clearError: true, model: model)
             : c,
     ]);
+  });
+
+  /// Saves how take [take] of line [id] is played and shared; null when the line or take is gone.
+  Future<CueItem?> setAdjust(String id, int take, TakeAdjust a) => _locked(() async {
+    CueItem? changed;
+    final items = [
+      for (final c in await all())
+        if (c.id == id && take >= 0 && take < c.clips.length)
+          changed = c.copyWith(clips: [for (final (i, k) in c.clips.indexed) i == take ? k.withAdjust(a) : k])
+        else
+          c,
+    ];
+    if (changed != null) await _save(items);
+    return changed;
   });
 
   /// Shows take [index] of the line; an index out of range is ignored.
