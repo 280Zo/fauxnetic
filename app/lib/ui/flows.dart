@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../app_services.dart';
 import '../people/person.dart';
+import '../platform/report_email.dart';
 import '../recording/scripts.dart';
 import 'about_screen.dart';
 import 'check_words_screen.dart';
@@ -91,6 +92,7 @@ class Flows {
           onModelsRemoved();
         },
         onAbout: () => Navigator.of(ctx).push(MaterialPageRoute<void>(builder: (_) => const AboutScreen())),
+        onReport: reportGeneratedLine,
         models: s.modelInfo,
         onDefaultModel: s.setDefaultModel,
         onDeleteModel: s.deleteModel,

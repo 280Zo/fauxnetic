@@ -74,10 +74,6 @@ abstract class SpeakController extends ChangeNotifier {
   /// Hands the line's audio to Android's share sheet.
   Future<void> share(CueItem item);
 
-  /// Opens an email draft reporting [item] to the developer (Google Play's AI-generated content
-  /// policy asks for an in-app way to report offensive content). False when no email app opened.
-  Future<bool> report(CueItem item);
-
   /// Generates the line again with a new seed (different audio); ignored for lines without a clip.
   Future<void> tryAgain(CueItem item);
 
@@ -173,7 +169,6 @@ class CueSpeakController extends SpeakController {
     this.models,
     this.speeds,
     this.memoryReader,
-    this.reporter,
   }) : _clock = clock ?? (() => DateTime.now().toUtc()) {
     final m = models;
     if (m != null) {
@@ -309,26 +304,6 @@ class CueSpeakController extends SpeakController {
     playedSeconds = 0;
     _busy = false;
     await _player.stop();
-  }
-
-  /// Opens an email draft (subject, body); null in tests that don't report.
-  final Future<bool> Function(String subject, String body)? reporter;
-
-  @override
-  Future<bool> report(CueItem item) async {
-    final r = reporter;
-    if (r == null) return false;
-    final model = item.clips.isEmpty ? null : item.clips[item.current.clamp(0, item.clips.length - 1)].engine;
-    final body = [
-      "What's wrong with this line? (optional)",
-      '',
-      '',
-      '---',
-      'Line: ${item.text}',
-      if (model != null) 'Model: $model',
-      'No audio or voice recording is attached.',
-    ].join('\n');
-    return r('Fauxnetic: report a generated line', body);
   }
 
   @override

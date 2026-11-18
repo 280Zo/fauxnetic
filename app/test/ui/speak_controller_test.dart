@@ -217,30 +217,6 @@ void main() {
     expect(c.items.single.status, CueStatus.ready, reason: 'stopped early is not played');
   });
 
-  test('report drafts an email with the line, its model and no audio', () async {
-    final sent = <String>[];
-    final c = CueSpeakController(
-      sam,
-      cues,
-      preparer,
-      player,
-      temp,
-      shares,
-      reporter: (subject, body) async {
-        sent
-          ..add(subject)
-          ..add(body);
-        return true;
-      },
-    );
-    await c.add('Say something awful.');
-    await c.idle;
-    expect(await c.report(c.items.single), isTrue);
-    expect(sent.first, 'Fauxnetic: report a generated line');
-    expect(sent.last, contains('Say something awful.'));
-    expect(sent.last, contains('No audio or voice recording is attached.'));
-  });
-
   group('selection (Speak dock, 2026-11-18)', () {
     Future<CueSpeakController> withLines(List<String> texts) async {
       final c = await controller();

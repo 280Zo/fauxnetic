@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:material_ui/material_ui.dart';
 
 import '../models/model_store.dart';
+import '../platform/report_email.dart';
 import '../settings/settings_store.dart';
 import '../storage/storage_report.dart';
 import '../theme.dart';
@@ -26,7 +27,11 @@ class SettingsScreen extends StatefulWidget {
     required this.onDefaultModel,
     required this.onDeleteModel,
     required this.downloadModel,
+    required this.onReport,
   });
+
+  /// Opens an email draft reporting a generated line; false when there is no email app.
+  final Future<bool> Function() onReport;
 
   final Future<List<ModelInfo>> Function() models;
   final Future<void> Function(String id) onDefaultModel;
@@ -223,6 +228,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
               title: const Text('About and privacy'),
               trailing: const Icon(Icons.chevron_right),
               onTap: widget.onAbout,
+            ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Report a generated line'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () async {
+                final messenger = ScaffoldMessenger.of(context);
+                if (!await widget.onReport()) {
+                  messenger.showSnackBar(
+                    const SnackBar(content: Text('No email app found. Send reports to $kReportEmail.')),
+                  );
+                }
+              },
             ),
           ],
         ),

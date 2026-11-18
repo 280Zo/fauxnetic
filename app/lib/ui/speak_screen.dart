@@ -1,11 +1,11 @@
 import 'dart:async';
 
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../cues/cue.dart';
 import '../engine/voice_engine.dart';
 import '../engine/tts_models.dart';
-import '../platform/report_email.dart';
 import '../recording/scripts.dart';
 import '../storage/storage_report.dart';
 import '../theme.dart';
@@ -529,33 +529,19 @@ class _Player extends StatelessWidget {
         Expanded(
           child: _Waveform(peaks: c.waveform, progress: progress),
         ),
-        // Share and Report at the left, play in the center under its time, New at the right.
+        // Share at the left, play in the center under its time, New at the right.
         Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Expanded(
-              child: Row(
-                children: [
-                  IconButton(
-                    tooltip: 'Share',
-                    visualDensity: VisualDensity.compact,
-                    icon: const Icon(Icons.share_outlined, size: 20),
-                    onPressed: () => c.share(item),
-                  ),
-                  IconButton(
-                    tooltip: 'Report this line',
-                    visualDensity: VisualDensity.compact,
-                    icon: Icon(Icons.flag_outlined, size: 18, color: context.colors.muted),
-                    onPressed: () async {
-                      final messenger = ScaffoldMessenger.of(context);
-                      if (!await c.report(item)) {
-                        messenger.showSnackBar(
-                          const SnackBar(content: Text('No email app found. Send reports to $kReportEmail.')),
-                        );
-                      }
-                    },
-                  ),
-                ],
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: IconButton(
+                  tooltip: 'Share',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.share_outlined, size: 20),
+                  onPressed: () => c.share(item),
+                ),
               ),
             ),
             Column(
@@ -674,6 +660,11 @@ class _CueRow extends StatelessWidget {
           child: InkWell(
             key: selected ? Key('selected-${item.id}') : null,
             onTap: onTap,
+            onLongPress: () async {
+              final messenger = ScaffoldMessenger.of(context);
+              await Clipboard.setData(ClipboardData(text: item.text));
+              messenger.showSnackBar(const SnackBar(content: Text('Copied'), duration: Duration(seconds: 2)));
+            },
             child: Container(
               decoration: BoxDecoration(
                 border: Border(left: BorderSide(color: selected ? context.colors.clone : Colors.transparent, width: 3)),

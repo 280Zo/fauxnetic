@@ -43,6 +43,10 @@ void main() {
           storage: () async => const StorageReport(models: 1400000000, voices: 2300000, lines: 120000),
           onRemoveModels: () async => events.add('remove models'),
           onAbout: () => events.add('about'),
+          onReport: () async {
+            events.add('report');
+            return true;
+          },
         ),
       ),
     );
@@ -66,6 +70,15 @@ void main() {
     expect(find.text('120 KB'), findsOneWidget);
   });
 
+  testWidgets('reporting a generated line lives in Settings, under About', (t) async {
+    // Google Play's AI-generated content policy needs an in-app way to report offensive content.
+    await pump(t);
+    await scrollTo(t, 'Report a generated line');
+    await t.tap(find.text('Report a generated line'));
+    await t.pump();
+    expect(events, ['report']);
+  });
+
   testWidgets('models list size, state and default', (t) async {
     await pump(t);
     await scrollTo(t, 'Models');
@@ -81,6 +94,8 @@ void main() {
   testWidgets('deleting a model asks first', (t) async {
     await pump(t);
     await scrollTo(t, 'Pocket TTS');
+    await t.ensureVisible(find.widgetWithText(TextButton, 'Delete'));
+    await t.pumpAndSettle();
     await t.tap(find.widgetWithText(TextButton, 'Delete'));
     await t.pumpAndSettle();
     expect(find.text('Delete VoxCPM 2?'), findsOneWidget);
@@ -142,6 +157,8 @@ void main() {
   testWidgets('picking a downloaded model as default sets it', (t) async {
     await pump(t);
     await scrollTo(t, 'Pocket TTS');
+    await t.ensureVisible(find.text('VoxCPM 2'));
+    await t.pumpAndSettle();
     await t.tap(find.text('VoxCPM 2'));
     await t.pumpAndSettle();
     expect(events, ['default voxcpm']);

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fauxnetic/cues/cue.dart';
@@ -72,12 +73,6 @@ class FakeSpeakController extends SpeakController {
   Future<void> stop() async => stops++;
   @override
   Future<void> share(CueItem item) async => sharedIds.add(item.id);
-  final reportedIds = <String>[];
-  @override
-  Future<bool> report(CueItem item) async {
-    reportedIds.add(item.id);
-    return true;
-  }
 
   @override
   Future<void> retry(CueItem item) async => retried.add(item.id);
@@ -336,14 +331,29 @@ void main() {
     expect(c.takes, ['a 0'], reason: 'next is past the last take, so disabled');
   });
 
-  testWidgets('the player has a Report button for the shown line', (t) async {
-    // Google Play's AI-generated content policy: an in-app way to report offensive content.
+  testWidgets('the player has no Report button (it is in Settings)', (t) async {
     final c = await pump(t);
     c.setItems([cue('a', CueStatus.ready, 'One.')]);
     c.setShown('a');
     await t.pump();
-    await t.tap(inDock(find.byTooltip('Report this line')));
-    expect(c.reportedIds, ['a']);
+    expect(find.byTooltip('Report this line'), findsNothing);
+  });
+
+  testWidgets('holding a line copies its text', (t) async {
+    final copied = <String>[];
+    t.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') copied.add((call.arguments as Map)['text'] as String);
+      return null;
+    });
+    addTearDown(() => t.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null));
+    final c = await pump(t);
+    c.setItems([cue('a', CueStatus.ready, 'Can you read me the code?')]);
+    await t.pump();
+    await t.longPress(find.text('Can you read me the code?'));
+    await t.pump();
+    expect(copied, ['Can you read me the code?']);
+    expect(find.text('Copied'), findsOneWidget);
+    expect(c.selectedIds, isEmpty, reason: 'holding copies; it does not select');
   });
 
   testWidgets('Re-generate and Share act on the shown line', (t) async {
@@ -405,16 +415,14 @@ void main() {
       expect(c.retriedIds, isEmpty, reason: 'picking does not re-generate by itself');
     });
 
-    testWidgets('bottom row: Share and Report left, play centered under its time, New right', (t) async {
+    testWidgets('bottom row: Share left, play centered under its time, New right', (t) async {
       await narrow(t);
       final dock = t.getRect(find.byKey(const Key('dock')));
       final share = t.getRect(inDock(find.byTooltip('Share')));
-      final report = t.getRect(inDock(find.byTooltip('Report this line')));
       final play = t.getRect(inDock(find.byTooltip('Play')));
       final time = t.getRect(inDock(find.textContaining(' / ')));
       final newer = t.getRect(inDock(find.text('✎ New')));
       expect(share.left - dock.left, lessThan(40));
-      expect(report.center.dy, closeTo(share.center.dy, 1));
       expect(play.center.dx, closeTo(dock.center.dx, 2));
       expect(time.bottom, lessThanOrEqualTo(play.top));
       expect(time.center.dx, closeTo(play.center.dx, 2));
