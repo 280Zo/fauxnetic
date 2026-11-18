@@ -449,6 +449,47 @@ void main() {
     });
   });
 
+  group('spoken word highlight', () {
+    List<TextSpan> spans(WidgetTester t) =>
+        (t.widget<Text>(find.byKey(const Key('spoken-words'))).textSpan! as TextSpan).children!.cast<TextSpan>();
+    Color? colorOf(WidgetTester t, String word) => spans(t).firstWhere((s) => s.text!.contains(word)).style?.color;
+
+    testWidgets('the word being spoken is magenta; none is before playing', (t) async {
+      final c = await pump(t);
+      c.setItems([cue('a', CueStatus.ready, 'One two three')]);
+      c.words = ['One', 'two', 'three'];
+      c.wordStarts = [0, 1, 2];
+      c.setShown('a');
+      await t.pump();
+      expect(spans(t).map((s) => s.style?.color), everyElement(isNot(Palette.clone)));
+      c.setPlaying('a');
+      c.playedSeconds = 1.5;
+      c.setPlaying('a');
+      await t.pump();
+      expect(colorOf(t, 'two'), Palette.clone);
+      expect(colorOf(t, 'One'), isNot(Palette.clone));
+      expect(colorOf(t, 'three'), isNot(Palette.clone));
+    });
+
+    testWidgets('a long line slides along to keep the spoken word in view', (t) async {
+      final c = await pump(t);
+      final text = List.generate(30, (i) => 'word$i').join(' ');
+      c.setItems([cue('a', CueStatus.ready, text)]);
+      c.words = text.split(' ');
+      c.wordStarts = [for (var i = 0; i < 30; i++) i.toDouble()];
+      c.setShown('a');
+      await t.pump();
+      ScrollController scroll() => t.widget<SingleChildScrollView>(find.byKey(const Key('spoken-line'))).controller!;
+      expect(scroll().offset, 0);
+      c.playedSeconds = 25.5;
+      c.setPlaying('a');
+      await t.pumpAndSettle();
+      expect(scroll().offset, greaterThan(0));
+      final word = t.getRect(find.byKey(const Key('spoken-line')));
+      expect(word.width, greaterThan(0));
+    });
+  });
+
   testWidgets('a take shows which engine made it', (t) async {
     final c = await pump(t);
     c.setItems([

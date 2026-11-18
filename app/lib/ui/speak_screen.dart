@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../audio/word_timing.dart';
 import '../cues/cue.dart';
 import '../engine/voice_engine.dart';
 import '../engine/tts_models.dart';
@@ -505,11 +506,9 @@ class _Player extends StatelessWidget {
             ],
           ),
         ),
-        Text(
-          '“${item.text}”',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+        _SpokenLine(
+          words: c.words.isNotEmpty ? c.words : item.text.split(RegExp(r'\s+')),
+          active: playing ? activeWord(c.wordStarts, c.playedSeconds) : -1,
         ),
         Text.rich(
           TextSpan(
@@ -576,6 +575,91 @@ class _Player extends StatelessWidget {
           ],
         ),
       ],
+    );
+  }
+}
+
+/// The line in the player, on one row: while it plays, the word being spoken is magenta and the
+/// row slides along to keep it in view (word times are estimates, see estimateWordStarts).
+class _SpokenLine extends StatefulWidget {
+  const _SpokenLine({required this.words, required this.active});
+  final List<String> words;
+
+  /// Index of the word being spoken; -1 when none (not playing, or before the first word).
+  final int active;
+
+  static const style = TextStyle(fontWeight: FontWeight.w700, fontSize: 16);
+
+  @override
+  State<_SpokenLine> createState() => _SpokenLineState();
+}
+
+class _SpokenLineState extends State<_SpokenLine> {
+  final _scroll = ScrollController();
+
+  String _piece(int k) {
+    final w = widget.words;
+    return '${k == 0 ? '“' : ' '}${w[k]}${k == w.length - 1 ? '”' : ''}';
+  }
+
+  @override
+  void didUpdateWidget(_SpokenLine old) {
+    super.didUpdateWidget(old);
+    if (widget.active != old.active || widget.words != old.words) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _follow());
+    }
+  }
+
+  /// Keeps the spoken word about a third of the way in; back to the start when it stops.
+  void _follow() {
+    if (!mounted || !_scroll.hasClients) return;
+    final pos = _scroll.position;
+    var target = 0.0;
+    if (widget.active >= 0) {
+      final before = TextPainter(
+        text: TextSpan(
+          style: DefaultTextStyle.of(context).style.merge(_SpokenLine.style),
+          text: [for (var k = 0; k < widget.active; k++) _piece(k)].join(),
+        ),
+        textDirection: TextDirection.ltr,
+        textScaler: MediaQuery.textScalerOf(context),
+      )..layout();
+      target = (before.width - pos.viewportDimension / 3).clamp(0.0, pos.maxScrollExtent);
+      before.dispose();
+    }
+    if ((target - pos.pixels).abs() > 1) {
+      _scroll.animateTo(target, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+    }
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final clone = context.colors.clone;
+    return SingleChildScrollView(
+      key: const Key('spoken-line'),
+      controller: _scroll,
+      scrollDirection: Axis.horizontal,
+      child: Text.rich(
+        key: const Key('spoken-words'),
+        TextSpan(
+          children: [
+            for (var k = 0; k < widget.words.length; k++)
+              TextSpan(
+                text: _piece(k),
+                style: k == widget.active ? TextStyle(color: clone) : null,
+              ),
+          ],
+        ),
+        maxLines: 1,
+        softWrap: false,
+        style: _SpokenLine.style,
+      ),
     );
   }
 }

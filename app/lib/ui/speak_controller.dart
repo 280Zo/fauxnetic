@@ -5,6 +5,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 
 import '../audio/wav.dart';
+import '../audio/word_timing.dart';
 import '../cues/cue.dart';
 import '../cues/cue_repo.dart';
 import '../cues/preparer.dart';
@@ -34,6 +35,11 @@ abstract class SpeakController extends ChangeNotifier {
 
   /// How far the playing line is, in seconds; 0 when nothing plays.
   double playedSeconds = 0;
+
+  /// The shown line's words, and when each starts in its current take (estimated from the text
+  /// and the take's loudness); empty when none is shown.
+  List<String> words = const [];
+  List<double> wordStarts = const [];
 
   /// Puts [item] in the player without playing it; another line playing stops.
   Future<void> select(CueItem item);
@@ -346,9 +352,24 @@ class CueSpeakController extends SpeakController {
     final p = playing;
     if (p != null) await _stopIfPlaying(p);
     shownId = null;
+    _clearShape();
+    notifyListeners();
+  }
+
+  /// Waveform, length and word starts of [item]'s take from its WAV [bytes].
+  void _shape(CueItem item, List<int> bytes) {
+    waveform = wavPeaks(bytes, 32);
+    lengthSeconds = wavSeconds(bytes);
+    words = item.text.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+    // 20 ms frames: fine enough to find the pauses between words.
+    wordStarts = estimateWordStarts(words, wavPeaks(bytes, max(1, (lengthSeconds * 50).round())), lengthSeconds);
+  }
+
+  void _clearShape() {
     waveform = const [];
     lengthSeconds = 0;
-    notifyListeners();
+    words = const [];
+    wordStarts = const [];
   }
 
   /// The shown take's waveform and length, read from its clip without playing it.
@@ -356,12 +377,9 @@ class CueSpeakController extends SpeakController {
     File? clip;
     try {
       clip = await _cues.decryptedClip(item, _temp);
-      final bytes = await clip.readAsBytes();
-      waveform = wavPeaks(bytes, 32);
-      lengthSeconds = wavSeconds(bytes);
+      _shape(item, await clip.readAsBytes());
     } catch (_) {
-      waveform = const [];
-      lengthSeconds = 0;
+      _clearShape();
     } finally {
       if (clip != null) await _temp.release(clip);
     }
@@ -386,9 +404,7 @@ class CueSpeakController extends SpeakController {
     try {
       clip = await _cues.decryptedClip(item, _temp);
       if (mine != _token) return;
-      final bytes = await clip.readAsBytes();
-      waveform = wavPeaks(bytes, 32);
-      lengthSeconds = wavSeconds(bytes);
+      _shape(item, await clip.readAsBytes());
       if (mine != _token) return;
       playingId = item.id;
       shownId = item.id;

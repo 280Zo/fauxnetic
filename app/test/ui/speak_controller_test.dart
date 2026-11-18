@@ -237,6 +237,17 @@ void main() {
       expect(c.lengthSeconds, greaterThan(0));
     });
 
+    test('the shown take has a start time for each word, in order, within the clip', () async {
+      final c = await withLines(['Hello there, Sam.']);
+      await c.select(c.items.single);
+      expect(c.words, ['Hello', 'there,', 'Sam.']);
+      expect(c.wordStarts, hasLength(3));
+      for (var k = 1; k < 3; k++) {
+        expect(c.wordStarts[k], greaterThan(c.wordStarts[k - 1]));
+      }
+      expect(c.wordStarts.last, lessThan(c.lengthSeconds));
+    });
+
     test('newLine clears the selection and stops playback', () async {
       final c = await withLines(['Hello there.']);
       final playing = c.play(c.items.single);
@@ -244,6 +255,7 @@ void main() {
       await c.newLine();
       await playing;
       expect(c.shownId, isNull);
+      expect(c.wordStarts, isEmpty);
       expect(c.playingId, isNull);
       expect(player.events, contains('stop'));
     });
