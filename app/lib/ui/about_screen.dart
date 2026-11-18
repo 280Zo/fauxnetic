@@ -96,6 +96,7 @@ Future<void> registerLicences() async {
       'https://creativecommons.org/licenses/by/4.0/',
     ),
     LicenseEntryWithLineBreaks(['Atkinson Hyperlegible Next'], await asset('assets/fonts/OFL.txt')),
+    LicenseEntryWithLineBreaks(['Sonic'], [await asset('assets/licenses/sonic-notice.txt'), apache].join('\n\n')),
   ];
   LicenseRegistry.addLicense(() => Stream.fromIterable(entries));
 }

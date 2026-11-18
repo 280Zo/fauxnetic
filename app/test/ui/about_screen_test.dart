@@ -54,6 +54,7 @@ void main() {
         'Silero VAD',
         'WeSpeaker ResNet34-LM',
         'Atkinson Hyperlegible Next',
+        'Sonic',
       ]),
     );
   });

@@ -1,0 +1,6 @@
+Sonic library (github.com/waywardgeek/sonic, commit b93885dcb70aae50c6f76b0fe4e0868f029a077e)
+Copyright 2010, 2011 Bill Cox
+Licensed under the Apache License, Version 2.0.
+
+Fauxnetic uses a Dart port of Sonic.java (speed and pitch only, mono) to change the speed and
+pitch of a take without re-generating it.
