@@ -80,6 +80,30 @@ void main() {
       expect(e.spoken, ['Pocket line.']);
     });
 
+    test('a model that arrives during the last check still gets its lines made', () async {
+      // Review: runUntilEmpty during a run returned that run, which then ended with the line queued.
+      final e = FakeEngine();
+      var here = false;
+      late Preparer p;
+      p = Preparer(
+        e,
+        cues,
+        people,
+        FakeKeeper(),
+        ready: (m) async {
+          if (!here) {
+            here = true;
+            unawaited(p.runUntilEmpty()); // the download's onDone, mid-check
+            return false;
+          }
+          return true;
+        },
+      );
+      await cues.add(sam.id, 'First.', model: 'qwen');
+      await p.runUntilEmpty();
+      expect(e.spoken, ['First.'], reason: 'the same run goes round again');
+    });
+
     test('waiting lines run once their model arrives', () async {
       final e = FakeEngine();
       var here = false;

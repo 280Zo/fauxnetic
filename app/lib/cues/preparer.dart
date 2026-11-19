@@ -144,8 +144,18 @@ class Preparer {
 
   Stream<CueItem> get updates => _updates.stream;
 
-  /// Starts work if idle; returns the in-flight run otherwise.
-  Future<void> runUntilEmpty() => _running ??= _run().whenComplete(() => _running = null);
+  /// Starts work if idle; returns the in-flight run otherwise, which then checks the queue once
+  /// more before ending (a model may have just arrived for lines it already passed over).
+  Future<void> runUntilEmpty() {
+    final r = _running;
+    if (r != null) {
+      _again = true;
+      return r;
+    }
+    return _running = _run().whenComplete(() => _running = null);
+  }
+
+  var _again = false;
 
   var _unloading = false;
 
@@ -219,6 +229,7 @@ class Preparer {
     var started = false;
     try {
       while (!_unloading) {
+        _again = false;
         CueItem? next;
         for (final c in (await _cues.all()).where((c) => c.status == CueStatus.queued)) {
           if (await _ready(c.model)) {
@@ -226,7 +237,10 @@ class Preparer {
             break;
           }
         }
-        if (next == null) break;
+        if (next == null) {
+          if (_again) continue;
+          break;
+        }
         if (!started) {
           started = true;
           await _wake();
