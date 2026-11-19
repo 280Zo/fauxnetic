@@ -273,6 +273,11 @@ class ModelStore {
       final request = http.Request('GET', m.url);
       if (have > 0) request.headers['range'] = 'bytes=$have-';
       final response = await _client.send(request).timeout(stallTimeout);
+      // Cancelled while waiting for the server: write nothing.
+      if (cancel.cancelled) {
+        unawaited(response.stream.listen((_) {}).cancel());
+        throw const _Cancelled();
+      }
       final resumed = have > 0 && response.statusCode == 206;
       if (response.statusCode != 200 && !resumed) {
         throw ModelStoreError('Download of ${m.name} failed (HTTP ${response.statusCode}).');

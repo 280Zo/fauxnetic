@@ -199,6 +199,20 @@ void main() {
     expect(store.path(pin()).existsSync(), isFalse);
   });
 
+  test('a cancel while waiting for the server writes nothing', () async {
+    // Review: the cancel was lost if it came before the response headers.
+    final answer = Completer<http.StreamedResponse>();
+    final client = MockClient.streaming((request, body) => answer.future);
+    final store = ModelStore(dir, client: client, freeBytes: plenty, models: [pin()]);
+    final sub = store.download().listen((_) {}, onError: (_) {});
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await sub.cancel();
+    answer.complete(http.StreamedResponse(Stream.value(payload), 200, contentLength: payload.length));
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    expect(store.path(pin()).existsSync(), isFalse);
+    expect(File('${dir.path}/m.gguf.part').existsSync(), isFalse);
+  });
+
   test('a cancelled download keeps its part', () async {
     final c = StreamController<List<int>>();
     final client = MockClient.streaming((request, body) async {

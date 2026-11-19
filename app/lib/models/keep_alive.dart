@@ -28,7 +28,7 @@ class SharedKeeper implements BackgroundKeeper {
 Stream<T> keepAliveWhile<T>(Stream<T> source, BackgroundKeeper keeper, {required String title, String text = ''}) {
   late final StreamController<T> out;
   StreamSubscription<T>? sub;
-  var stopped = false;
+  var stopped = false, cancelled = false;
   Future<void> stop() async {
     if (stopped) return;
     stopped = true;
@@ -38,6 +38,12 @@ Stream<T> keepAliveWhile<T>(Stream<T> source, BackgroundKeeper keeper, {required
   out = StreamController<T>(
     onListen: () async {
       await keeper.start(title: title, text: text);
+      // Cancelled while the notification was starting: never start the source.
+      if (cancelled) {
+        stopped = false;
+        await stop();
+        return;
+      }
       sub = source.listen(
         out.add,
         onError: out.addError,
@@ -48,7 +54,11 @@ Stream<T> keepAliveWhile<T>(Stream<T> source, BackgroundKeeper keeper, {required
       );
     },
     onCancel: () async {
-      await sub?.cancel();
+      cancelled = true;
+      final s = sub;
+      // Before the source started, onListen stops the notification itself once it is up.
+      if (s == null) return;
+      await s.cancel();
       await stop();
     },
   );
