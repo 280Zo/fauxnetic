@@ -20,7 +20,9 @@ Future<void> main() async {
   try {
     await registerLicences();
     final services = await AppServices.create();
-    final missing = await services.models.missing();
+    // Only the recording set holds the app up; the voice set downloads in the background.
+    final missing = await services.missingRecordingSet();
+    if (missing.isEmpty) unawaited(services.startBackground());
     runApp(VoiceCloneApp(services: services, modelsReady: missing.isEmpty, missing: missing));
   } catch (e) {
     runApp(StartupErrorApp(error: e));
@@ -106,11 +108,12 @@ class _VoiceCloneAppState extends State<VoiceCloneApp> {
               },
             )
           : DownloadScreen(
-              start: widget.services.downloadModels,
+              start: widget.services.downloadRecordingSet,
               missing: _missing,
               onDone: () {
                 setState(() => _ready = true);
-                // Lines queued before the models were removed carry on.
+                // The voice set follows in the background; lines whose model is here carry on.
+                unawaited(widget.services.startBackground());
                 unawaited(widget.services.preparer.runUntilEmpty());
               },
             ),

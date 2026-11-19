@@ -6,15 +6,16 @@ import '../models/model_store.dart';
 import '../theme.dart';
 
 String downloadLabel(List<PinnedModel> models) =>
-    'Download voice models (${formatGb(models.fold<int>(0, (sum, m) => sum + m.size))})';
+    'Download (${formatGb(models.fold<int>(0, (sum, m) => sum + m.size))})';
 
 class DownloadScreen extends StatefulWidget {
   const DownloadScreen({super.key, required this.start, required this.onDone, this.missing});
   final Stream<DownloadProgress> Function() start;
   final VoidCallback onDone;
 
-  /// The models to fetch; null or all of them is a first download. Fewer is an update (a new
-  /// version of one model), shown as such so the owner doesn't think the app was reset.
+  /// The recording-set models to fetch; null or all of them is a first download (the voice set
+  /// follows in the background). Fewer is an update (a new version of one model), shown as such
+  /// so the owner doesn't think the app was reset.
   final List<PinnedModel>? missing;
 
   @override
@@ -43,7 +44,11 @@ class _DownloadScreenState extends State<DownloadScreen> {
       (p) => setState(() => _progress = p),
       onError: (Object e) => setState(() {
         _running = false;
-        _error = e is ModelStoreError ? e.message : 'The download failed. Check the connection and try again.';
+        _error = e is ModelStoreError && e.kind == ModelErrorKind.network
+            ? 'No connection. Connect to the internet to download.'
+            : e is ModelStoreError
+            ? e.message
+            : 'The download failed. Check the connection and try again.';
       }),
       onDone: () {
         if (_error != null) return;
@@ -61,7 +66,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
   Widget build(BuildContext context) {
     final p = _progress;
     final need = widget.missing;
-    final update = need != null && need.isNotEmpty && need.length < kModels.length;
+    final update = need != null && need.isNotEmpty && need.length < kRecordingModels.length;
     final size = update ? need.fold<int>(0, (s, m) => s + m.size) : 0;
     return Scaffold(
       body: SafeArea(
@@ -78,8 +83,9 @@ class _DownloadScreenState extends State<DownloadScreen> {
                     ? 'This version of Fauxnetic uses a better copy of one voice model, downloaded once over '
                           'Wi-Fi from Hugging Face and checked against a pinned checksum. Your voices and lines '
                           'are kept.'
-                    : 'The voice engine needs a few model files, downloaded once over Wi-Fi from Hugging Face '
-                          'and checked against pinned checksums. After that the app works in airplane mode.',
+                    : 'Fauxnetic needs about 1.5 GB of model files from Hugging Face, each checked against a '
+                          'fixed fingerprint. Recording needs only 120 MB, so you can start in about a minute '
+                          'while the rest downloads.',
               ),
               const SizedBox(height: 24),
               if (_running && p != null) ...[
@@ -93,7 +99,13 @@ class _DownloadScreenState extends State<DownloadScreen> {
               if (!_running && !_done)
                 FilledButton(
                   onPressed: _go,
-                  child: Text(update ? 'Download update (${formatSize(size)})' : downloadLabel(kModels)),
+                  child: Text(
+                    _error != null && _error!.startsWith('No connection')
+                        ? 'Retry'
+                        : update
+                        ? 'Download update (${formatSize(size)})'
+                        : downloadLabel(kModels),
+                  ),
                 ),
             ],
           ),

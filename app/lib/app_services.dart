@@ -12,6 +12,9 @@ import 'cues/preparer.dart';
 import 'cues/share.dart';
 import 'cues/speed_book.dart';
 import 'audio/marking.dart';
+import 'models/download_center.dart';
+import 'models/startup_downloads.dart';
+import 'platform/network.dart';
 import 'cues/take_renderer.dart';
 import 'engine/crispasr_engine.dart';
 import 'engine/tts_models.dart';
@@ -66,7 +69,11 @@ class AppServices {
     required this.upload,
     required this.settingsStore,
     required this.settings,
+    required this.downloads,
   });
+
+  /// Background downloads (the voice set after the first launch, and extra models).
+  final DownloadCenter downloads;
 
   final ModelStore models;
   final TempSweeper temp;
@@ -101,6 +108,8 @@ class AppServices {
   Future<bool> lineReady(String? model) async {
     final want = ttsModel(model ?? settings.value.model).id;
     if (await modelReady(want)) return true;
+    // On its way: the line waits for it rather than using another model.
+    if (downloads.job(want)?.pending ?? false) return false;
     final fallback = ttsModel(settings.value.model).id;
     return fallback != want && await modelReady(fallback);
   }
@@ -136,6 +145,7 @@ class AppServices {
   Future<void> deleteModel(String id) async {
     final m = ttsModel(id);
     if (m.files.isEmpty) return;
+    await downloads.cancel(m.id);
     await preparer.unload();
     await storeFor(m).removeOwn();
     if (settings.value.model == m.id) await setDefaultModel(kTtsModels.first.id);
@@ -190,17 +200,26 @@ class AppServices {
   /// One keep-alive notification shared by line preparation and downloads.
   static final keeper = SharedKeeper(ForegroundKeeper());
 
-  /// Model downloads keep running with the screen off.
-  Stream<DownloadProgress> downloadModels() => keepAliveWhile(
-    models.download(),
+  /// The first launch's download: only what recording needs (the voice set follows in the
+  /// background, see [startBackground]). Keeps running with the screen off.
+  Stream<DownloadProgress> downloadRecordingSet() => keepAliveWhile(
+    ModelStore(models.dir, models: kRecordingModels).download(),
     keeper,
     title: 'Downloading voice models',
     text: 'Fauxnetic keeps downloading with the screen off.',
   );
 
-  /// Stops the line being made (it goes back to the queue), frees the engine, then deletes the
-  /// model files.
+  /// The recording-set files not yet on the phone (the first-launch screen shows while any are).
+  Future<List<PinnedModel>> missingRecordingSet() => ModelStore(models.dir, models: kRecordingModels).missing();
+
+  /// Once the recording set is here: the voice set, and any extra model whose download was cut
+  /// off, continue in the background.
+  Future<void> startBackground() => queueMissingDownloads(models.dir, downloads.enqueue);
+
+  /// Stops downloads and the line being made (it goes back to the queue), frees the engine, then
+  /// deletes the model files and their partial downloads.
   Future<void> removeModels() async {
+    await downloads.cancelAll();
     await preparer.unload();
     await models.removeAll();
   }
@@ -260,6 +279,13 @@ class AppServices {
       upload: UploadPipeline(models, people, takes, builder, decode: AndroidDecoder(temp).decode16k, keepFor: keepFor),
       settingsStore: settingsStore,
       settings: settings,
+      downloads: DownloadCenter(
+        store: (files) => ModelStore(models.dir, models: files),
+        network: currentNetwork,
+        keeper: keeper,
+        // A model arriving lets the lines waiting for it be made.
+        onDone: (_) => unawaited(preparer.runUntilEmpty()),
+      ),
     );
     final now = DateTime.now().toUtc();
     // People from before voices expired start their clock now; then anything already due goes,
@@ -275,7 +301,8 @@ class AppServices {
     }
     await models.removeUnpinned();
     await FilePicker.clearTemporaryFiles();
-    if (await models.allPresent()) unawaited(s._repairThenPrepare());
+    // The end check needs only Whisper; lines whose model is still downloading wait.
+    if ((await s.missingRecordingSet()).isEmpty) unawaited(s._repairThenPrepare());
     s._startRetention();
     return s;
   }
