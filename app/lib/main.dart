@@ -98,6 +98,7 @@ class _VoiceCloneAppState extends State<VoiceCloneApp> {
                   onMoods: flows.moods,
                   onDelete: (p) => s.deletePerson(p.id),
                   takeExpired: s.takeExpired,
+                  downloads: s.downloads,
                   onSettings: () => flows.settings(
                     onModelsRemoved: () => setState(() {
                       _ready = false;

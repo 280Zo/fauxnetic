@@ -5,6 +5,10 @@ import 'package:fauxnetic/recording/reference_builder.dart';
 import 'package:fauxnetic/recording/scripts.dart';
 import 'package:fauxnetic/theme.dart';
 import 'package:fauxnetic/ui/people_screen.dart';
+import 'package:fauxnetic/models/download_center.dart';
+import 'package:fauxnetic/platform/network.dart';
+
+import '../models/download_center_test.dart' show CountingKeeper, FakeStore, file;
 
 const ref = VoiceRef(clipFile: 'c', refText: 'Hi.', seconds: 9);
 
@@ -96,6 +100,34 @@ void main() {
     );
     await t.pumpAndSettle();
     expect(find.text('voice ready · conversational · deleted in 5 h'), findsOneWidget);
+  });
+
+  testWidgets('the download bar shows under the title while the voice model downloads', (t) async {
+    final center = DownloadCenter(
+      store: (files) => FakeStore(files),
+      network: () async => NetKind.metered,
+      keeper: CountingKeeper(),
+      poll: const Duration(hours: 1),
+    );
+    await t.runAsync(() => center.enqueue('qwen', 'Voice model', [file('talker', 1400000000)]));
+    await t.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+    await t.pumpWidget(
+      MaterialApp(
+        theme: buildTheme(Brightness.light),
+        home: PeopleScreen(
+          load: () async => [],
+          onRecordNew: () async {},
+          onFromFile: () async {},
+          onOpen: (_) async {},
+          onMoods: (_) async {},
+          onDelete: (_) async {},
+          downloads: center,
+        ),
+      ),
+    );
+    await t.pump();
+    expect(find.text('Waiting for Wi-Fi · 1.4 GB left'), findsOneWidget);
+    center.dispose();
   });
 
   testWidgets('an expired voice is announced', (t) async {

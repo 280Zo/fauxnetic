@@ -2,9 +2,11 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 
+import '../models/download_center.dart';
 import '../people/expiry.dart';
 import '../people/person.dart';
 import '../theme.dart';
+import 'download_bar.dart';
 
 String personSubtitle(Person p, {DateTime? now}) {
   if (!p.ready) return 'voice not ready';
@@ -27,7 +29,11 @@ class PeopleScreen extends StatefulWidget {
     this.now,
     this.takeExpired,
     this.onSettings,
+    this.downloads,
   });
+
+  /// Background downloads, shown as a slim bar under the title while one is pending.
+  final DownloadCenter? downloads;
 
   /// Opens Settings; the list reloads when it closes (settings can delete voices).
   final Future<void> Function()? onSettings;
@@ -119,6 +125,7 @@ class _PeopleScreenState extends State<PeopleScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            if (widget.downloads != null) DownloadBar(center: widget.downloads!),
             Expanded(
               child: _people.isEmpty
                   ? Center(
