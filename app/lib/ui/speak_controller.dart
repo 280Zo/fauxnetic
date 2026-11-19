@@ -9,13 +9,13 @@ import '../audio/marking.dart';
 import '../audio/take_adjust.dart';
 import '../audio/word_timing.dart';
 import '../cues/take_renderer.dart';
+import '../models/download_center.dart';
 import '../cues/cue.dart';
 import '../cues/cue_repo.dart';
 import '../cues/preparer.dart';
 import '../cues/share.dart';
 import '../cues/speed_book.dart';
 import '../engine/tts_models.dart';
-import '../models/model_store.dart';
 import '../people/person.dart';
 import '../recording/scripts.dart';
 import '../storage/temp_sweeper.dart';
@@ -134,7 +134,12 @@ abstract class SpeakController extends ChangeNotifier {
 
   /// Completes once [modelId] is this voice's real starting model.
   Future<void> get modelSettled => Future.value();
-  Stream<DownloadProgress> downloadModel(String id) => const Stream.empty();
+
+  /// [id]'s background download, or null when there is none (2026-11-18).
+  DownloadJob? downloadOf(String id) => null;
+
+  /// Starts downloading [id] in the background; the picker switches to it once it is here.
+  Future<void> startDownload(String id) async {}
 
   Future<void> setModel(String id) async {
     modelId = id;
@@ -159,19 +164,12 @@ Future<String> modelForVoice(Person p, String fallback, Future<bool> Function(St
 
 /// Where the Speak screen's voice model picker reads and changes the saved choice.
 class ModelChoice {
-  const ModelChoice({
-    required this.current,
-    required this.ready,
-    required this.download,
-    required this.select,
-    this.resolve,
-  });
+  const ModelChoice({required this.current, required this.ready, required this.select, this.resolve});
 
   /// Shown at once; [resolve], when given, then settles the model this voice really starts on.
   final String Function() current;
   final Future<String> Function()? resolve;
   final Future<bool> Function(String id) ready;
-  final Stream<DownloadProgress> Function(String id) download;
   final Future<void> Function(String id) select;
 }
 
@@ -195,7 +193,9 @@ class CueSpeakController extends SpeakController {
     this.speeds,
     this.memoryReader,
     this.renderer,
+    this.downloads,
   }) : _clock = clock ?? (() => DateTime.now().toUtc()) {
+    downloads?.addListener(_downloadsChanged);
     final m = models;
     if (m != null) {
       modelId = m.current();
@@ -223,6 +223,36 @@ class CueSpeakController extends SpeakController {
 
   @override
   Future<void> get modelSettled => _settled;
+
+  /// Background downloads; null in tests that don't use them.
+  final DownloadCenter? downloads;
+
+  void _downloadsChanged() {
+    if (!_disposed) notifyListeners();
+  }
+
+  @override
+  DownloadJob? downloadOf(String id) => downloads?.job(id);
+
+  @override
+  Future<void> startDownload(String id) async {
+    final m = ttsModel(id);
+    await downloads?.enqueue(m.id, m.label, m.files);
+  }
+
+  /// "Waiting for the voice model (42%)" for a queued line whose model is still downloading.
+  String? _waitingFor(CueItem item) {
+    final id = ttsModel(item.model ?? modelId).id;
+    final j = downloadOf(id);
+    if (j == null || j.state == JobState.done) return null;
+    final name = id == kTtsModels.first.id ? 'the voice model' : ttsModel(id).label;
+    return switch (j.state) {
+      JobState.waitingWifi => 'Waiting for $name · waiting for Wi-Fi',
+      JobState.waitingNetwork => 'Waiting for $name · waiting for a connection',
+      JobState.failed => 'Waiting for $name · its download failed',
+      _ => 'Waiting for $name (${j.received * 100 ~/ (j.total == 0 ? 1 : j.total)}%)',
+    };
+  }
 
   @override
   String? get loadedModel => _preparer.loadedModel;
@@ -319,9 +349,6 @@ class CueSpeakController extends SpeakController {
 
   @override
   Future<bool> modelReady(String id) => models?.ready(id) ?? Future.value(true);
-
-  @override
-  Stream<DownloadProgress> downloadModel(String id) => models?.download(id) ?? const Stream.empty();
 
   @override
   Future<void> setModel(String id) async {
@@ -537,6 +564,8 @@ class CueSpeakController extends SpeakController {
     final label = _modelOf(item).label;
     switch (item.status) {
       case CueStatus.queued:
+        final waiting = _waitingFor(item);
+        if (waiting != null) return waiting;
         final n = _queue.indexOf(item.id) + 1;
         return n <= 1 ? 'Next in line' : '${ordinal(n)} in line';
       case CueStatus.preparing:
@@ -563,6 +592,7 @@ class CueSpeakController extends SpeakController {
   @override
   void dispose() {
     _disposed = true;
+    downloads?.removeListener(_downloadsChanged);
     _token++;
     unawaited(_player.stop());
     _ticker.cancel();

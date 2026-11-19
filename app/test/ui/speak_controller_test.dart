@@ -7,6 +7,10 @@ import 'package:fauxnetic/audio/marking.dart';
 import 'package:fauxnetic/audio/take_adjust.dart';
 import 'package:fauxnetic/audio/wav.dart';
 import 'package:fauxnetic/cues/take_renderer.dart';
+import 'package:fauxnetic/models/download_center.dart';
+import 'package:fauxnetic/platform/network.dart';
+
+import '../models/download_center_test.dart' show CountingKeeper, FakeStore, file;
 
 import '../support/keys.dart';
 import '../support/people.dart';
@@ -256,6 +260,38 @@ void main() {
     expect(c.playingId, isNull);
     expect(c.shownId, c.items.single.id);
     expect(c.items.single.status, CueStatus.ready, reason: 'stopped early is not played');
+  });
+
+  group('waiting for a model to download (2026-11-18)', () {
+    Future<(CueSpeakController, DownloadCenter, Map<String, FakeStore>)> waiting(NetKind net) async {
+      final stores = <String, FakeStore>{};
+      final center = DownloadCenter(
+        store: (files) => stores.putIfAbsent(files.first.name, () => FakeStore(files)),
+        network: () async => net,
+        keeper: CountingKeeper(),
+        poll: const Duration(hours: 1),
+      );
+      addTearDown(center.dispose);
+      preparer = Preparer(engine, cues, people, NoKeeper(), ready: (m) async => false);
+      final c = CueSpeakController(sam, cues, preparer, player, temp, shares, downloads: center);
+      await center.enqueue('qwen', 'Voice model', [file('talker', 1000)]);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await c.add('Hello.');
+      await c.idle;
+      return (c, center, stores);
+    }
+
+    test('a line waiting for Qwen says so with progress', () async {
+      final (c, _, stores) = await waiting(NetKind.unmetered);
+      stores['talker']!.emit(420);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(c.statusOf(c.items.single), 'Waiting for the voice model (42%)');
+    });
+
+    test('waiting for Wi-Fi shows in the status', () async {
+      final (c, _, _) = await waiting(NetKind.metered);
+      expect(c.statusOf(c.items.single), 'Waiting for the voice model · waiting for Wi-Fi');
+    });
   });
 
   group('take adjustments (2026-11-18)', () {

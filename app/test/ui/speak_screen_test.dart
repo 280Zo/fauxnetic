@@ -4,10 +4,10 @@ import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fauxnetic/audio/marking.dart';
+import 'package:fauxnetic/models/download_center.dart';
 import 'package:fauxnetic/audio/take_adjust.dart';
 import 'package:fauxnetic/cues/cue.dart';
 import 'package:fauxnetic/engine/voice_engine.dart';
-import 'package:fauxnetic/models/model_store.dart';
 import 'package:fauxnetic/people/person.dart';
 import 'package:fauxnetic/recording/reference_builder.dart';
 import 'package:fauxnetic/recording/scripts.dart';
@@ -139,12 +139,11 @@ class FakeSpeakController extends SpeakController {
   final modelEvents = <String>[];
   @override
   Future<bool> modelReady(String id) async => ready.contains(id);
+  final jobs = <String, DownloadJob>{};
   @override
-  Stream<DownloadProgress> downloadModel(String id) {
-    modelEvents.add('download $id');
-    ready.add(id);
-    return Stream.fromIterable([DownloadProgress('$id.gguf', 5, 10)]);
-  }
+  DownloadJob? downloadOf(String id) => jobs[id];
+  @override
+  Future<void> startDownload(String id) async => modelEvents.add('download $id');
 
   @override
   Future<void> setModel(String id) async {
@@ -632,7 +631,8 @@ void main() {
     expect(find.text('Qwen3-TTS'), findsOneWidget);
   });
 
-  testWidgets('picking a model that is not downloaded asks, downloads, then switches', (t) async {
+  testWidgets('picking a model that is not downloaded asks, then downloads it in the background', (t) async {
+    // 2026-11-18: no blocking download dialog; the model downloads while the app is used.
     final c = await pump(t);
     await t.tap(find.text('Qwen3-TTS'));
     await t.pumpAndSettle();
@@ -643,15 +643,30 @@ void main() {
     await t.tap(find.text('Not now'));
     await t.pumpAndSettle();
     expect(c.modelEvents, isEmpty);
-    expect(c.modelId, 'qwen');
     await t.tap(find.text('Qwen3-TTS'));
     await t.pumpAndSettle();
     await t.tap(find.text('Pocket TTS').last);
     await t.pumpAndSettle();
     await t.tap(find.text('Download'));
+    await t.pump();
+    expect(c.modelEvents, ['download pocket'], reason: 'started; not switched until it is here');
+    expect(c.modelId, 'qwen');
+    expect(find.text('Downloading Pocket TTS in the background'), findsOneWidget);
+    expect(find.byType(LinearProgressIndicator), findsNothing, reason: 'no blocking download dialog');
+  });
+
+  testWidgets('a downloading model shows its progress and cannot be picked', (t) async {
+    final c = await pump(t);
+    c.jobs['pocket'] = DownloadJob('pocket', 'Pocket TTS', const [], 100)
+      ..state = JobState.downloading
+      ..received = 34;
+    await t.tap(find.text('Qwen3-TTS'));
     await t.pumpAndSettle();
-    expect(c.modelEvents, ['download pocket', 'load pocket', 'model pocket']);
-    expect(find.text('Pocket TTS'), findsOneWidget, reason: 'the picker shows the new model');
+    expect(find.text('Pocket TTS · 34%'), findsOneWidget);
+    await t.tap(find.text('Pocket TTS · 34%'));
+    await t.pumpAndSettle();
+    expect(c.modelEvents, isEmpty);
+    expect(c.modelId, 'qwen');
   });
 
   testWidgets('a model too big for the free memory warns first', (t) async {

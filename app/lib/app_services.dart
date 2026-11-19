@@ -390,6 +390,7 @@ class AppServices {
       shares,
       speeds: preparer.speeds,
       renderer: TakeRenderer(cues, CrispMarker.new),
+      downloads: downloads,
       memoryReader: () async {
         try {
           return parseMemAvailable(await File('/proc/meminfo').readAsString());
@@ -401,7 +402,6 @@ class AppServices {
         current: () => settings.value.model,
         resolve: () => modelForVoice(p, settings.value.model, modelReady),
         ready: modelReady,
-        download: downloadModel,
         select: (id) => people.setModel(p.id, id),
       ),
     );

@@ -7,6 +7,7 @@ import '../audio/word_timing.dart';
 import '../cues/cue.dart';
 import '../engine/voice_engine.dart';
 import '../engine/tts_models.dart';
+import '../models/download_center.dart';
 import '../recording/scripts.dart';
 import '../storage/storage_report.dart';
 import '../theme.dart';
@@ -221,8 +222,15 @@ class _ModelPicker extends StatelessWidget {
     final c = controller;
     if (id == c.modelId) return;
     if (!await c.modelReady(id)) {
-      if (!context.mounted) return;
-      if (!await confirmAndDownload(context, ttsModel(id), () => c.downloadModel(id))) return;
+      // 2026-11-18: it downloads in the background; it can be picked once it is here.
+      final j = c.downloadOf(id);
+      if (!context.mounted || (j != null && j.pending)) return;
+      final m = ttsModel(id);
+      final messenger = ScaffoldMessenger.of(context);
+      if (!await confirmDownload(context, m)) return;
+      await c.startDownload(id);
+      messenger.showSnackBar(SnackBar(content: Text('Downloading ${m.label} in the background')));
+      return;
     }
     if (!context.mounted || !await _enoughMemory(context, ttsModel(id))) return;
     if (!context.mounted) return;
@@ -271,7 +279,12 @@ class _ModelPicker extends StatelessWidget {
           onSelected: (id) => _pick(context, id),
           itemBuilder: (_) => [
             for (final m in kTtsModels)
-              CheckedPopupMenuItem(value: m.id, checked: m.id == controller.modelId, child: Text(m.label)),
+              CheckedPopupMenuItem(
+                value: m.id,
+                checked: m.id == controller.modelId,
+                enabled: !(controller.downloadOf(m.id)?.pending ?? false),
+                child: Text(_pickerLabel(m, controller.downloadOf(m.id))),
+              ),
           ],
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -284,6 +297,16 @@ class _ModelPicker extends StatelessWidget {
       ],
     );
   }
+}
+
+/// "Pocket TTS · 34%" or "· waiting for Wi-Fi" while a model downloads in the background.
+String _pickerLabel(TtsModel m, DownloadJob? j) {
+  if (j == null || !j.pending) return m.label;
+  return switch (j.state) {
+    JobState.waitingWifi => '${m.label} · waiting for Wi-Fi',
+    JobState.waitingNetwork => '${m.label} · waiting for a connection',
+    _ => '${m.label} · ${j.received * 100 ~/ (j.total == 0 ? 1 : j.total)}%',
+  };
 }
 
 /// Loads [id] behind a loading screen ("Loading VoxCPM 2… 0:12", Cancel). Returns the model to

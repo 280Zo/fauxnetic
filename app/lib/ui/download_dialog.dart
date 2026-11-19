@@ -6,20 +6,25 @@ import '../engine/tts_models.dart';
 import '../models/model_store.dart';
 import '../storage/storage_report.dart';
 
+/// Shows [m]'s size and licence note; true when the user chose Download.
+Future<bool> confirmDownload(BuildContext context, TtsModel m) async =>
+    await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Download ${m.label}?'),
+        content: Text('Downloads ${formatBytes(m.downloadBytes)}. ${m.note ?? ''}'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Not now')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Download')),
+        ],
+      ),
+    ) ==
+    true;
+
 /// Shows [m]'s size and licence note, then downloads it with progress. True once it's on the phone.
 Future<bool> confirmAndDownload(BuildContext context, TtsModel m, Stream<DownloadProgress> Function() start) async {
-  final ok = await showDialog<bool>(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      title: Text('Download ${m.label}?'),
-      content: Text('Downloads ${formatBytes(m.downloadBytes)}. ${m.note ?? ''}'),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Not now')),
-        TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Download')),
-      ],
-    ),
-  );
-  if (ok != true || !context.mounted) return false;
+  final ok = await confirmDownload(context, m);
+  if (!ok || !context.mounted) return false;
   final done = await showDialog<bool>(
     context: context,
     barrierDismissible: false,
