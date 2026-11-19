@@ -150,7 +150,8 @@ class ModelStore {
     var n = 0;
     await for (final e in dir.list()) {
       final name = e.uri.pathSegments.last;
-      if (e is File && !pinned.contains(name) && !name.endsWith('.part')) {
+      // Partial downloads resume; dot files (the list of wanted downloads) are the app's own.
+      if (e is File && !pinned.contains(name) && !name.endsWith('.part') && !name.startsWith('.')) {
         await e.delete();
         n++;
       }
@@ -260,10 +261,12 @@ class ModelStore {
     }
   }
 
-  Future<void> _fetch(PinnedModel m, void Function(DownloadProgress) emit, _Cancel cancel) async {
+  Future<void> _fetch(PinnedModel m, void Function(DownloadProgress) emit, _Cancel cancel, {bool fresh = false}) async {
     final target = path(m);
     final part = File('${target.path}.part');
     if (await target.exists()) await target.delete();
+    if (fresh && await part.exists()) await part.delete();
+    var resumed = false;
     IOSink? sink;
     // A partial file survives interruptions (to resume from); only a real failure discards it.
     var keepPart = true;
@@ -278,9 +281,20 @@ class ModelStore {
         unawaited(response.stream.listen((_) {}).cancel());
         throw const _Cancelled();
       }
-      final resumed = have > 0 && response.statusCode == 206;
+      resumed = have > 0 && response.statusCode == 206;
       if (response.statusCode != 200 && !resumed) {
-        throw ModelStoreError('Download of ${m.name} failed (HTTP ${response.statusCode}).');
+        final status = response.statusCode;
+        unawaited(response.stream.listen((_) {}).cancel());
+        // Busy or a server error: wait and try again, keeping what arrived. 416 means the part
+        // doesn't fit the file any more: it starts over.
+        if (status == 416) keepPart = false;
+        if (status == 429 || status >= 500) {
+          throw ModelStoreError(
+            'The download server is busy (HTTP $status). It will try again.',
+            kind: ModelErrorKind.network,
+          );
+        }
+        throw ModelStoreError('Download of ${m.name} failed (HTTP $status).');
       }
       // A 200 to a resume is the whole file: the part starts over.
       final out = sink = part.openWrite(mode: resumed ? FileMode.append : FileMode.write);
@@ -322,6 +336,13 @@ class ModelStore {
       sink = null;
       if (!await _verified(part, m)) {
         keepPart = false;
+        // A resumed part may hold old or damaged bytes: the whole file once more from zero.
+        if (resumed && !fresh) {
+          await part.delete();
+          await _fetch(m, emit, cancel, fresh: true);
+          done = true;
+          return;
+        }
         throw ModelStoreError('${m.name} did not match its checksum. Try the download again.');
       }
       await part.rename(target.path);

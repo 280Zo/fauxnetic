@@ -101,6 +101,39 @@ void main() {
     expect(requests, 1);
   });
 
+  test('a busy server keeps the part and is a network error, tried again later', () async {
+    // Review I3: one 503 while resuming at 900 MB deleted the 900 MB.
+    File('${dir.path}/m.gguf.part').writeAsBytesSync(payload.sublist(0, 2000));
+    final client = MockClient((request) async => http.Response('busy', 503));
+    final store = ModelStore(dir, client: client, freeBytes: plenty, models: [pin()]);
+    await expectLater(
+      store.download().drain<void>(),
+      throwsA(isA<ModelStoreError>().having((e) => e.kind, 'kind', ModelErrorKind.network)),
+    );
+    expect(File('${dir.path}/m.gguf.part').lengthSync(), 2000);
+  });
+
+  test('a resumed part that fails the checksum downloads again from zero, once', () async {
+    File('${dir.path}/m.gguf.part').writeAsBytesSync(List.filled(2000, 7));
+    var requests = 0;
+    final client = MockClient.streaming((request, body) async {
+      requests++;
+      return request.headers.containsKey('range')
+          ? http.StreamedResponse(Stream.value(payload.sublist(2000)), 206)
+          : http.StreamedResponse(Stream.value(payload), 200);
+    });
+    final store = ModelStore(dir, client: client, freeBytes: plenty, models: [pin()]);
+    await store.download().drain<void>();
+    expect(await store.path(pin()).readAsBytes(), payload);
+    expect(requests, 2);
+  });
+
+  test('launch cleanup keeps the list of wanted downloads', () async {
+    File('${dir.path}/.wanted').writeAsStringSync('pocket\n');
+    await ModelStore(dir, models: [pin()]).removeUnpinned();
+    expect(File('${dir.path}/.wanted').existsSync(), isTrue);
+  });
+
   test('a bad HTTP status is failed', () async {
     final client = MockClient((request) async => http.Response('nope', 404));
     final store = ModelStore(dir, client: client, freeBytes: plenty, models: [pin()]);

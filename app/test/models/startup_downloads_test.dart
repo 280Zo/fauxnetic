@@ -37,6 +37,18 @@ void main() {
     expect(queued, ['pocket Pocket TTS']);
   });
 
+  test('an extra that was asked for is queued again even without a part', () async {
+    // Review I3: a failed download had deleted its part, so it was never retried at launch.
+    [...kRecordingModels, ...kVoiceModels].forEach(present);
+    await markWanted(dir, 'pocket');
+    await queueMissingDownloads(dir, enqueue);
+    expect(queued, ['pocket Pocket TTS']);
+    await clearWanted(dir, 'pocket');
+    queued.clear();
+    await queueMissingDownloads(dir, enqueue);
+    expect(queued, isEmpty);
+  });
+
   test('nothing missing queues nothing', () async {
     [...kRecordingModels, ...kVoiceModels].forEach(present);
     await queueMissingDownloads(dir, enqueue);

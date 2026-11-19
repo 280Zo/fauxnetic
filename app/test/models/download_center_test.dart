@@ -154,7 +154,8 @@ void main() {
 
   test('a network error while still connected waits before trying again', () async {
     // Review: Wi-Fi without internet (a login page) retried in a tight loop.
-    stores['talker'] = FakeStore(voice)..alwaysFail = const ModelStoreError('interrupted', kind: ModelErrorKind.network);
+    stores['talker'] = FakeStore(voice)
+      ..alwaysFail = const ModelStoreError('interrupted', kind: ModelErrorKind.network);
     await center.enqueue('qwen', 'Voice model', voice);
     await Future<void>.delayed(const Duration(milliseconds: 45));
     expect(stores['talker']!.downloads, inInclusiveRange(1, 6), reason: 'about one try per 10 ms poll, not hundreds');
@@ -197,6 +198,21 @@ void main() {
     await center.enqueue('pocket', 'Pocket TTS', pocket);
     await settle();
     expect(done, ['pocket']);
+  });
+
+  test('onEnqueue hears each new job once', () async {
+    final added = <String>[];
+    final c = DownloadCenter(
+      store: (files) => stores.putIfAbsent(files.first.name, () => FakeStore(files)),
+      network: () async => NetKind.metered,
+      keeper: keeper,
+      poll: const Duration(hours: 1),
+      onEnqueue: added.add,
+    );
+    addTearDown(c.dispose);
+    await c.enqueue('pocket', 'Pocket TTS', pocket);
+    await c.enqueue('pocket', 'Pocket TTS', pocket);
+    expect(added, ['pocket']);
   });
 
   test('cancel stops a running job and removes it', () async {

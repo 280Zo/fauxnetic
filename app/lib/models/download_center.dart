@@ -38,7 +38,11 @@ class DownloadCenter extends ChangeNotifier {
     required this._keeper,
     this.poll = const Duration(seconds: 5),
     this.onDone,
+    this.onEnqueue,
   });
+
+  /// Hears each job added (the app remembers extra models asked for, to retry at the next launch).
+  final void Function(String id)? onEnqueue;
 
   final ModelStore Function(List<PinnedModel> files) _store;
   final Future<NetKind> Function() _network;
@@ -67,6 +71,7 @@ class DownloadCenter extends ChangeNotifier {
     final j = DownloadJob(id, label, files, total)..received = total - await _store(files).bytesLeft();
     if (job(id) != null || _disposed) return;
     _jobs.add(j);
+    onEnqueue?.call(id);
     notifyListeners();
     await _pump();
   }

@@ -140,6 +140,7 @@ class AppServices {
     final m = ttsModel(id);
     if (m.files.isEmpty) return;
     await downloads.cancel(m.id);
+    await clearWanted(models.dir, m.id);
     await preparer.unload();
     await storeFor(m).removeOwn();
     if (settings.value.model == m.id) await setDefaultModel(kTtsModels.first.id);
@@ -278,7 +279,14 @@ class AppServices {
         network: currentNetwork,
         keeper: keeper,
         // A model arriving lets the lines waiting for it be made.
-        onDone: (_) => unawaited(preparer.runUntilEmpty()),
+        onDone: (id) {
+          unawaited(clearWanted(models.dir, id));
+          unawaited(preparer.runUntilEmpty());
+        },
+        // An extra model asked for is tried again at the next launch until it is here.
+        onEnqueue: (id) {
+          if (id != kTtsModels.first.id) unawaited(markWanted(models.dir, id));
+        },
       ),
     );
     final now = DateTime.now().toUtc();
