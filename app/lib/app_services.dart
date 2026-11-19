@@ -13,6 +13,7 @@ import 'cues/share.dart';
 import 'cues/speed_book.dart';
 import 'audio/marking.dart';
 import 'models/download_center.dart';
+import 'models/line_ready.dart';
 import 'models/startup_downloads.dart';
 import 'platform/network.dart';
 import 'cues/take_renderer.dart';
@@ -103,16 +104,13 @@ class AppServices {
         : await storeFor(m).allPresent();
   }
 
-  /// Whether a line for [model] (null: the default) can be made now. A line for a deleted model
-  /// uses the default, as the engine does.
-  Future<bool> lineReady(String? model) async {
-    final want = ttsModel(model ?? settings.value.model).id;
-    if (await modelReady(want)) return true;
-    // On its way: the line waits for it rather than using another model.
-    if (downloads.job(want)?.pending ?? false) return false;
-    final fallback = ttsModel(settings.value.model).id;
-    return fallback != want && await modelReady(fallback);
-  }
+  /// Whether a line for [model] (null: the default) can be made now; see [lineCanRun].
+  Future<bool> lineReady(String? model) => lineCanRun(
+    want: ttsModel(model ?? settings.value.model).id,
+    fallback: ttsModel(settings.value.model).id,
+    ready: modelReady,
+    job: downloads.job,
+  );
 
   /// Starts an extra model's background download (2026-11-18).
   Future<void> startModelDownload(String id) {
