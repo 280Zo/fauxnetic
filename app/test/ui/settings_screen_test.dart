@@ -3,19 +3,35 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:fauxnetic/engine/tts_models.dart';
-import 'package:fauxnetic/models/model_store.dart';
 import 'package:fauxnetic/settings/settings_store.dart';
 import 'package:fauxnetic/ui/models_section.dart';
 import 'package:fauxnetic/storage/storage_report.dart';
 import 'package:fauxnetic/theme.dart';
 import 'package:fauxnetic/ui/settings_screen.dart';
+import 'package:fauxnetic/models/download_center.dart';
+import 'package:fauxnetic/platform/network.dart';
+
+import '../models/download_center_test.dart' show CountingKeeper, FakeStore;
 
 void main() {
   late List<String> events;
+  late Map<String, FakeStore> stores;
+  late DownloadCenter center;
+  late NetKind net;
+  setUp(() => net = NetKind.unmetered);
 
   Future<void> pump(WidgetTester t, {int older = 0, Set<String> downloaded = const {'qwen', 'voxcpm'}}) async {
     events = [];
+    stores = {};
     final have = {...downloaded};
+    center = DownloadCenter(
+      store: (files) => stores.putIfAbsent(files.first.name, () => FakeStore(files)),
+      network: () async => net,
+      keeper: CountingKeeper(),
+      poll: const Duration(milliseconds: 10),
+      onDone: have.add,
+    );
+    addTearDown(center.dispose);
     await t.pumpWidget(
       MaterialApp(
         theme: buildTheme(Brightness.dark),
@@ -29,10 +45,11 @@ void main() {
             events.add('delete $id');
             have.remove(id);
           },
-          downloadModel: (id) {
+          downloads: center,
+          startDownload: (id) async {
             events.add('download $id');
-            have.add(id);
-            return Stream.fromIterable([DownloadProgress('$id.gguf', 5, 10)]);
+            final m = ttsModel(id);
+            await center.enqueue(m.id, m.label, m.files);
           },
           settings: AppSettings.defaults,
           onTheme: (c) async => events.add('theme ${c.name}'),
@@ -127,7 +144,7 @@ void main() {
               calls.add('delete $id');
               await gate.future;
             },
-            download: (_) => const Stream.empty(),
+            startDownload: (_) async {},
           ),
         ),
       ),
@@ -164,15 +181,43 @@ void main() {
     expect(events, ['default voxcpm']);
   });
 
-  testWidgets('picking a not-downloaded model as default downloads it first', (t) async {
+  Future<void> settle(WidgetTester t) async {
+    await t.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 40)));
+    await t.pump();
+  }
+
+  testWidgets('a not-downloaded model downloads in the background, then becomes the default', (t) async {
     await pump(t);
     await scrollTo(t, 'Pocket TTS');
     await t.tap(find.text('Pocket TTS'));
     await t.pumpAndSettle();
     expect(find.textContaining('CC-BY-4.0'), findsOneWidget);
     await t.tap(find.text('Download'));
-    await t.pumpAndSettle();
+    await t.pump();
+    await settle(t);
+    expect(events, ['download pocket'], reason: 'not the default until it is here');
+    stores['pocket-tts-english-q8_0.gguf']!.emit(41000000);
+    await settle(t);
+    expect(find.textContaining('33%'), findsOneWidget);
+    await t.runAsync(() => stores['pocket-tts-english-q8_0.gguf']!.finish());
+    await settle(t);
+    await settle(t);
     expect(events, ['download pocket', 'default pocket']);
+  });
+
+  testWidgets('a row waiting for Wi-Fi says so and offers mobile data', (t) async {
+    net = NetKind.metered;
+    await pump(t);
+    await scrollTo(t, 'Pocket TTS');
+    await t.tap(find.text('Pocket TTS'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Download'));
+    await t.pump();
+    await settle(t);
+    expect(find.textContaining('Waiting for Wi-Fi'), findsOneWidget);
+    await t.tap(find.text('Use mobile data'));
+    await settle(t);
+    expect(center.job('pocket')!.allowMetered, isTrue);
   });
 
   testWidgets('theme choice applies and is saved', (t) async {

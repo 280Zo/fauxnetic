@@ -114,14 +114,10 @@ class AppServices {
     return fallback != want && await modelReady(fallback);
   }
 
-  Stream<DownloadProgress> downloadModel(String id) {
+  /// Starts an extra model's background download (2026-11-18).
+  Future<void> startModelDownload(String id) {
     final m = ttsModel(id);
-    return keepAliveWhile(
-      storeFor(m).download(),
-      keeper,
-      title: 'Downloading ${m.label}',
-      text: 'Fauxnetic keeps downloading with the screen off.',
-    );
+    return downloads.enqueue(m.id, m.label, m.files);
   }
 
   /// The default model: what voices use until one is picked for them on the Speak screen.

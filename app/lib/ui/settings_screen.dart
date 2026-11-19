@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 
+import '../models/download_center.dart';
 import '../models/model_store.dart';
 import '../platform/report_email.dart';
 import '../settings/settings_store.dart';
@@ -26,8 +27,9 @@ class SettingsScreen extends StatefulWidget {
     required this.models,
     required this.onDefaultModel,
     required this.onDeleteModel,
-    required this.downloadModel,
+    required this.startDownload,
     required this.onReport,
+    this.downloads,
   });
 
   /// Opens an email draft reporting a generated line; false when there is no email app.
@@ -36,7 +38,10 @@ class SettingsScreen extends StatefulWidget {
   final Future<List<ModelInfo>> Function() models;
   final Future<void> Function(String id) onDefaultModel;
   final Future<void> Function(String id) onDeleteModel;
-  final Stream<DownloadProgress> Function(String id) downloadModel;
+
+  /// Starts a model's background download; [downloads] shows its progress in its row.
+  final Future<void> Function(String id) startDownload;
+  final DownloadCenter? downloads;
 
   final AppSettings settings;
   final Future<void> Function(ThemeChoice c) onTheme;
@@ -214,7 +219,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 await widget.onDeleteModel(id);
                 await _measure();
               },
-              download: widget.downloadModel,
+              startDownload: widget.startDownload,
+              downloads: widget.downloads,
             ),
             _heading('Storage'),
             _row('Voice models', st == null ? '…' : formatBytes(st.models)),

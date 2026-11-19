@@ -96,7 +96,8 @@ class Flows {
         models: s.modelInfo,
         onDefaultModel: s.setDefaultModel,
         onDeleteModel: s.deleteModel,
-        downloadModel: s.downloadModel,
+        startDownload: s.startModelDownload,
+        downloads: s.downloads,
       ),
     ),
   );

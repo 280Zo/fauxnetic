@@ -1,6 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 
 import '../engine/tts_models.dart';
+import '../models/download_center.dart';
 import '../models/model_store.dart';
 import '../storage/storage_report.dart';
 import '../theme.dart';
@@ -16,8 +17,9 @@ class ModelInfo {
   final int bytes;
 }
 
-/// Settings → Models: pick the default model (downloading it first if needed) and delete optional
-/// ones. Qwen comes with the core download, so only "Remove voice models" removes it.
+/// Settings → Models: pick the default model and delete optional ones. A model that isn't on the
+/// phone downloads in the background (2026-11-18) and becomes the default once it is here. Qwen
+/// comes with the core download, so only "Remove voice models" removes it.
 class ModelsSection extends StatefulWidget {
   const ModelsSection({
     super.key,
@@ -25,14 +27,16 @@ class ModelsSection extends StatefulWidget {
     required this.models,
     required this.onDefault,
     required this.onDelete,
-    required this.download,
+    required this.startDownload,
+    this.downloads,
   });
 
   final String initialDefault;
   final Future<List<ModelInfo>> Function() models;
   final Future<void> Function(String id) onDefault;
   final Future<void> Function(String id) onDelete;
-  final Stream<DownloadProgress> Function(String id) download;
+  final Future<void> Function(String id) startDownload;
+  final DownloadCenter? downloads;
 
   @override
   State<ModelsSection> createState() => _ModelsSectionState();
@@ -45,10 +49,32 @@ class _ModelsSectionState extends State<ModelsSection> {
   /// While a model is being deleted its row says so and can't be tapped.
   String? _deleting;
 
+  /// Picked while not downloaded: becomes the default when its download is done.
+  String? _wanted;
+
   @override
   void initState() {
     super.initState();
+    widget.downloads?.addListener(_downloadsChanged);
     _load();
+  }
+
+  @override
+  void dispose() {
+    widget.downloads?.removeListener(_downloadsChanged);
+    super.dispose();
+  }
+
+  Future<void> _downloadsChanged() async {
+    if (!mounted) return;
+    setState(() {});
+    final w = _wanted;
+    if (w == null || widget.downloads?.job(w)?.state != JobState.done) return;
+    _wanted = null;
+    await widget.onDefault(w);
+    if (!mounted) return;
+    setState(() => _default = w);
+    await _load();
   }
 
   Future<void> _load() async {
@@ -58,11 +84,40 @@ class _ModelsSectionState extends State<ModelsSection> {
 
   Future<void> _pick(ModelInfo i) async {
     if (i.model.id == _default || i.model.id == _deleting) return;
-    if (!i.downloaded && !await confirmAndDownload(context, i.model, () => widget.download(i.model.id))) return;
+    if (!i.downloaded) {
+      if (widget.downloads?.job(i.model.id)?.pending ?? false) return;
+      if (!await confirmDownload(context, i.model)) return;
+      _wanted = i.model.id;
+      await widget.startDownload(i.model.id);
+      return;
+    }
     await widget.onDefault(i.model.id);
     if (!mounted) return;
     setState(() => _default = i.model.id);
     await _load();
+  }
+
+  /// The row's line while its model downloads; null otherwise.
+  String? _downloadText(String id) {
+    final j = widget.downloads?.job(id);
+    if (j == null || j.state == JobState.done) return null;
+    return switch (j.state) {
+      JobState.waitingWifi => 'Waiting for Wi-Fi · ${formatSize(j.left)} left',
+      JobState.waitingNetwork => 'Waiting for a connection · ${formatSize(j.left)} left',
+      JobState.failed => 'Failed: ${j.error ?? 'download failed'}',
+      _ => 'Downloading ${j.received * 100 ~/ (j.total == 0 ? 1 : j.total)}% · ${formatSize(j.left)} left',
+    };
+  }
+
+  Widget? _downloadAction(String id) {
+    final d = widget.downloads;
+    final j = d?.job(id);
+    if (d == null || j == null) return null;
+    if (j.state == JobState.waitingWifi) {
+      return TextButton(onPressed: () => d.allowMobileData(id), child: const Text('Use mobile data'));
+    }
+    if (j.state == JobState.failed) return TextButton(onPressed: () => d.retry(id), child: const Text('Retry'));
+    return null;
   }
 
   Future<void> _delete(ModelInfo i) async {
@@ -112,21 +167,23 @@ class _ModelsSectionState extends State<ModelsSection> {
             subtitle: Text(
               i.model.id == _deleting
                   ? 'Deleting…'
-                  : [
-                      if (i.model.id == _default) 'Default',
-                      i.model.files.isEmpty
-                          ? 'Comes with the voice models'
-                          : i.downloaded
-                          ? '${formatBytes(i.bytes)} on this phone'
-                          : 'Not downloaded (${formatBytes(i.model.downloadBytes)})',
-                    ].join(' · '),
+                  : _downloadText(i.model.id) ??
+                        [
+                          if (i.model.id == _default) 'Default',
+                          i.model.files.isEmpty
+                              ? 'Comes with the voice models'
+                              : i.downloaded
+                              ? '${formatBytes(i.bytes)} on this phone'
+                              : 'Not downloaded (${formatBytes(i.model.downloadBytes)})',
+                        ].join(' · '),
               style: muted,
             ),
             trailing: i.model.id == _deleting
                 ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                : i.downloaded && i.model.files.isNotEmpty && _deleting == null
-                ? TextButton(onPressed: () => _delete(i), child: const Text('Delete'))
-                : null,
+                : _downloadAction(i.model.id) ??
+                      (i.downloaded && i.model.files.isNotEmpty && _deleting == null
+                          ? TextButton(onPressed: () => _delete(i), child: const Text('Delete'))
+                          : null),
           ),
       ],
     );
