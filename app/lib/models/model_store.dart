@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:ffi';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:crypto/crypto.dart';
 import 'package:ffi/ffi.dart';
@@ -89,9 +90,26 @@ class DownloadProgress {
   final int total;
 }
 
+/// What needs recording a voice (Whisper, VAD, the speaker check: about 117 MB), downloaded first
+/// on the first launch.
+final List<PinnedModel> kRecordingModels = [
+  for (final m in kModels)
+    if (m.role != ModelRole.talker && m.role != ModelRole.codec) m,
+];
+
+/// Qwen's talker and codec (1.34 GB): needed only to make lines, so they download in the background.
+final List<PinnedModel> kVoiceModels = [
+  for (final m in kModels)
+    if (m.role == ModelRole.talker || m.role == ModelRole.codec) m,
+];
+
+/// A lost or stalled connection (wait and continue), or a real failure (checksum, space, server).
+enum ModelErrorKind { network, failed }
+
 class ModelStoreError implements Exception {
-  const ModelStoreError(this.message);
+  const ModelStoreError(this.message, {this.kind = ModelErrorKind.failed});
   final String message;
+  final ModelErrorKind kind;
   @override
   String toString() => message;
 }
@@ -174,6 +192,16 @@ class ModelStore {
       if (!await path(m).exists() || await path(m).length() != m.size) m,
   ];
 
+  /// Bytes still to download: the missing models' sizes less what their partial files hold.
+  Future<int> bytesLeft() async {
+    var left = 0;
+    for (final m in await missing()) {
+      final part = File('${path(m).path}.part');
+      left += m.size - (await part.exists() ? math.min(await part.length(), m.size) : 0);
+    }
+    return left;
+  }
+
   Future<bool> allReady() async {
     for (final m in models) {
       if (!await _verified(path(m), m)) return false;
@@ -181,8 +209,8 @@ class ModelStore {
     return true;
   }
 
-  /// Downloads every missing model. Cancelling the subscription (the owner leaves the screen)
-  /// stops the network read at once and removes the partial file.
+  /// Downloads every missing model, continuing partial files. Cancelling the subscription stops
+  /// the network read at once and keeps the partial file, so the next download resumes it.
   Stream<DownloadProgress> download() {
     late final StreamController<DownloadProgress> out;
     final cancel = _Cancel();
@@ -203,20 +231,31 @@ class ModelStore {
 
   Future<void> _downloadAll(void Function(DownloadProgress) emit, _Cancel cancel) async {
     await dir.create(recursive: true);
-    await for (final e in dir.list()) {
-      if (e is File && e.path.endsWith('.part')) await e.delete();
-    }
     final missing = <PinnedModel>[];
     for (final m in models) {
       if (!await _verified(path(m), m)) missing.add(m);
     }
-    final need = missing.fold<int>(0, (sum, m) => sum + m.size) + _headroomBytes;
+    var already = 0;
+    for (final m in missing) {
+      final part = File('${path(m).path}.part');
+      if (await part.exists()) already += math.min(await part.length(), m.size);
+    }
+    final need = missing.fold<int>(0, (sum, m) => sum + m.size) - already + _headroomBytes;
     final have = await _freeBytes();
     if (missing.isNotEmpty && have < need) {
       throw ModelStoreError('Not enough free storage: need ${formatGb(need)}, have ${formatGb(have)}.');
     }
     for (final m in missing) {
       if (cancel.cancelled) return;
+      final part = File('${path(m).path}.part');
+      // A part already complete is checked first; one that is too long or doesn't match starts over.
+      if (await part.exists() && await part.length() >= m.size) {
+        if (await part.length() == m.size && await _verified(part, m)) {
+          await part.rename(path(m).path);
+          continue;
+        }
+        await part.delete();
+      }
       await _fetch(m, emit, cancel);
     }
   }
@@ -226,14 +265,21 @@ class ModelStore {
     final part = File('${target.path}.part');
     if (await target.exists()) await target.delete();
     IOSink? sink;
+    // A partial file survives interruptions (to resume from); only a real failure discards it.
+    var keepPart = true;
     var done = false;
     try {
-      final response = await _client.send(http.Request('GET', m.url)).timeout(stallTimeout);
-      if (response.statusCode != 200) {
+      final have = await part.exists() ? await part.length() : 0;
+      final request = http.Request('GET', m.url);
+      if (have > 0) request.headers['range'] = 'bytes=$have-';
+      final response = await _client.send(request).timeout(stallTimeout);
+      final resumed = have > 0 && response.statusCode == 206;
+      if (response.statusCode != 200 && !resumed) {
         throw ModelStoreError('Download of ${m.name} failed (HTTP ${response.statusCode}).');
       }
-      final out = sink = part.openWrite();
-      var received = 0;
+      // A 200 to a resume is the whole file: the part starts over.
+      final out = sink = part.openWrite(mode: resumed ? FileMode.append : FileMode.write);
+      var received = resumed ? have : 0;
       final finished = Completer<void>();
       final sub = response.stream
           .timeout(stallTimeout)
@@ -270,24 +316,31 @@ class ModelStore {
       await sink.close();
       sink = null;
       if (!await _verified(part, m)) {
+        keepPart = false;
         throw ModelStoreError('${m.name} did not match its checksum. Try the download again.');
       }
       await part.rename(target.path);
       done = true;
-    } on ModelStoreError {
+    } on ModelStoreError catch (e) {
+      if (e.kind == ModelErrorKind.failed) keepPart = false;
+      rethrow;
+    } on _Cancelled {
       rethrow;
     } catch (e) {
-      throw ModelStoreError('Download of ${m.name} was interrupted. Check the connection and try again.');
+      throw ModelStoreError(
+        'Download of ${m.name} was interrupted. Check the connection and try again.',
+        kind: ModelErrorKind.network,
+      );
     } finally {
-      if (!done) await _discard(sink, part);
+      if (!done) await _discard(sink, part, keep: keepPart);
     }
   }
 
-  Future<void> _discard(IOSink? sink, File part) async {
+  Future<void> _discard(IOSink? sink, File part, {bool keep = false}) async {
     try {
       await sink?.close();
     } catch (_) {}
-    if (await part.exists()) await part.delete();
+    if (!keep && await part.exists()) await part.delete();
   }
 }
 

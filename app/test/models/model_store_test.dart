@@ -54,12 +54,97 @@ void main() {
     expect(dir.listSync(), isEmpty);
   });
 
-  test('interrupted download leaves no model', () async {
+  test('interrupted download leaves no model, keeps its part and is a network error', () async {
     final store = ModelStore(dir, client: serving(payload, failMidway: true), freeBytes: plenty, models: [pin()]);
-    await expectLater(store.download().drain<void>(), throwsA(isA<ModelStoreError>()));
+    await expectLater(
+      store.download().drain<void>(),
+      throwsA(isA<ModelStoreError>().having((e) => e.kind, 'kind', ModelErrorKind.network)),
+    );
     expect(store.path(pin()).existsSync(), isFalse);
-    expect(dir.listSync(), isEmpty);
+    expect(File('${dir.path}/m.gguf.part').lengthSync(), payload.length ~/ 2);
     expect(await store.allReady(), isFalse);
+  });
+
+  test('resume sends a Range header and appends a 206', () async {
+    File('${dir.path}/m.gguf.part').writeAsBytesSync(payload.sublist(0, 2000));
+    String? range;
+    final client = MockClient.streaming((request, body) async {
+      range = request.headers['range'];
+      return http.StreamedResponse(Stream.value(payload.sublist(2000)), 206, contentLength: payload.length - 2000);
+    });
+    final store = ModelStore(dir, client: client, freeBytes: plenty, models: [pin()]);
+    final events = await store.download().toList();
+    expect(range, 'bytes=2000-');
+    expect(events.first.received, greaterThan(2000), reason: 'progress counts what was already there');
+    expect(await store.path(pin()).readAsBytes(), payload);
+    expect(File('${dir.path}/m.gguf.part').existsSync(), isFalse);
+  });
+
+  test('a 200 answer to a resume starts the part over', () async {
+    File('${dir.path}/m.gguf.part').writeAsBytesSync(List.filled(2000, 7));
+    final store = ModelStore(dir, client: serving(payload), freeBytes: plenty, models: [pin()]);
+    await store.download().drain<void>();
+    expect(await store.path(pin()).readAsBytes(), payload);
+  });
+
+  test('a part at full size that fails the checksum starts over', () async {
+    File('${dir.path}/m.gguf.part').writeAsBytesSync(List.filled(payload.length, 7));
+    var requests = 0;
+    final store = ModelStore(
+      dir,
+      client: serving(payload, onRequest: () => requests++),
+      freeBytes: plenty,
+      models: [pin()],
+    );
+    await store.download().drain<void>();
+    expect(await store.path(pin()).readAsBytes(), payload);
+    expect(requests, 1);
+  });
+
+  test('a bad HTTP status is failed', () async {
+    final client = MockClient((request) async => http.Response('nope', 404));
+    final store = ModelStore(dir, client: client, freeBytes: plenty, models: [pin()]);
+    await expectLater(
+      store.download().drain<void>(),
+      throwsA(isA<ModelStoreError>().having((e) => e.kind, 'kind', ModelErrorKind.failed)),
+    );
+  });
+
+  test('free space counts what is already downloaded', () async {
+    final big = pin(size: 1000 * 1024 * 1024);
+    File('${dir.path}/m.gguf.part').writeAsBytesSync(List.filled(1, 0));
+    // A 1 GB file with 900 MB already in the part: only 100 MB more is needed (plus headroom).
+    final part = File('${dir.path}/m.gguf.part');
+    final raf = part.openSync(mode: FileMode.append);
+    raf.truncateSync(900 * 1024 * 1024);
+    raf.closeSync();
+    String? message;
+    final store = ModelStore(
+      dir,
+      client: MockClient((request) async => http.Response('', 404)),
+      freeBytes: () async => 700 * 1024 * 1024,
+      models: [big],
+    );
+    try {
+      await store.download().drain<void>();
+    } on ModelStoreError catch (e) {
+      message = e.message;
+    }
+    expect(message, isNot(contains('Not enough free storage')));
+  });
+
+  test('bytesLeft subtracts parts', () async {
+    File('${dir.path}/m.gguf.part').writeAsBytesSync(payload.sublist(0, 1000));
+    expect(await ModelStore(dir, models: [pin()]).bytesLeft(), payload.length - 1000);
+  });
+
+  test('recording and voice sets split the core files', () {
+    expect(
+      {for (final m in kRecordingModels) m.role},
+      {ModelRole.asrBase, ModelRole.asrTiny, ModelRole.vad, ModelRole.speaker},
+    );
+    expect({for (final m in kVoiceModels) m.role}, {ModelRole.talker, ModelRole.codec});
+    expect(kRecordingModels.length + kVoiceModels.length, kModels.length);
   });
 
   test('existing verified model is not re-downloaded', () async {
@@ -105,28 +190,16 @@ void main() {
     );
     await expectLater(
       store.download().drain<void>(),
-      throwsA(isA<ModelStoreError>().having((e) => e.message, 'message', contains('interrupted'))),
+      throwsA(
+        isA<ModelStoreError>()
+            .having((e) => e.message, 'message', contains('interrupted'))
+            .having((e) => e.kind, 'kind', ModelErrorKind.network),
+      ),
     );
-    expect(dir.listSync(), isEmpty);
+    expect(store.path(pin()).existsSync(), isFalse);
   });
 
-  test('stale part file is removed before free space is measured', () async {
-    final part = File('${dir.path}/m.gguf.part')..writeAsBytesSync(List.filled(100, 1));
-    var partGoneWhenMeasured = false;
-    final store = ModelStore(
-      dir,
-      client: serving(payload),
-      models: [pin()],
-      freeBytes: () async {
-        partGoneWhenMeasured = !part.existsSync();
-        return 10 * 1024 * 1024 * 1024;
-      },
-    );
-    await store.download().drain<void>();
-    expect(partGoneWhenMeasured, isTrue);
-  });
-
-  test('leaving mid-download removes the part file', () async {
+  test('a cancelled download keeps its part', () async {
     final c = StreamController<List<int>>();
     final client = MockClient.streaming((request, body) async {
       c.add(payload.sublist(0, 10));
@@ -137,7 +210,7 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 20));
     await sub.cancel();
     await Future<void>.delayed(const Duration(milliseconds: 20));
-    expect(File('${dir.path}/m.gguf.part').existsSync(), isFalse);
+    expect(File('${dir.path}/m.gguf.part').lengthSync(), 10, reason: 'kept, to resume from');
     await c.close();
   });
 
