@@ -33,14 +33,12 @@ class DownloadJob {
 /// Retry.
 class DownloadCenter extends ChangeNotifier {
   DownloadCenter({
-    required ModelStore Function(List<PinnedModel> files) store,
-    required Future<NetKind> Function() network,
-    required BackgroundKeeper keeper,
+    required this._store,
+    required this._network,
+    required this._keeper,
     this.poll = const Duration(seconds: 5),
     this.onDone,
-  }) : _store = store,
-       _network = network,
-       _keeper = keeper;
+  });
 
   final ModelStore Function(List<PinnedModel> files) _store;
   final Future<NetKind> Function() _network;
