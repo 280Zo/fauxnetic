@@ -98,9 +98,15 @@ class Preparer {
     Duration Function()? keepFor,
     String? Function()? engineLabel,
     this.speeds,
+    Future<bool> Function(String? model)? ready,
   }) : _clock = clock ?? (() => DateTime.now().toUtc()),
        _keepFor = keepFor ?? (() => kRetention),
-       _engineLabel = engineLabel ?? (() => null);
+       _engineLabel = engineLabel ?? (() => null),
+       _ready = ready ?? ((_) async => true);
+
+  /// Whether a line's model (its own id, null for the default) is on the phone. Lines whose model
+  /// is still downloading wait in the queue; the rest are made (2026-11-18).
+  final Future<bool> Function(String? model) _ready;
 
   /// Learned seconds per word for each model; null in tests that don't time lines.
   final SpeedBook? speeds;
@@ -213,7 +219,13 @@ class Preparer {
     var started = false;
     try {
       while (!_unloading) {
-        final next = (await _cues.all()).where((c) => c.status == CueStatus.queued).firstOrNull;
+        CueItem? next;
+        for (final c in (await _cues.all()).where((c) => c.status == CueStatus.queued)) {
+          if (await _ready(c.model)) {
+            next = c;
+            break;
+          }
+        }
         if (next == null) break;
         if (!started) {
           started = true;

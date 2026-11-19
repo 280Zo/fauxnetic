@@ -63,6 +63,36 @@ void main() {
     expect(e.loads, 1);
   });
 
+  group('lines wait for their model (background downloads, 2026-11-18)', () {
+    test('lines wait while Qwen is missing', () async {
+      final e = FakeEngine();
+      await cues.add(sam.id, 'First.', model: 'qwen');
+      await Preparer(e, cues, people, FakeKeeper(), ready: (m) async => m != 'qwen').runUntilEmpty();
+      expect(e.prepared, isEmpty);
+      expect((await cues.all()).single.status, CueStatus.queued, reason: 'waiting, not failed');
+    });
+
+    test('a line for a model that is on the phone runs while Qwen is missing', () async {
+      final e = FakeEngine();
+      await cues.add(sam.id, 'Qwen line.', model: 'qwen');
+      await cues.add(sam.id, 'Pocket line.', model: 'pocket');
+      await Preparer(e, cues, people, FakeKeeper(), ready: (m) async => m == 'pocket').runUntilEmpty();
+      expect(e.spoken, ['Pocket line.']);
+    });
+
+    test('waiting lines run once their model arrives', () async {
+      final e = FakeEngine();
+      var here = false;
+      final p = Preparer(e, cues, people, FakeKeeper(), ready: (m) async => here);
+      await cues.add(sam.id, 'First.', model: 'qwen');
+      await p.runUntilEmpty();
+      expect(e.spoken, isEmpty);
+      here = true;
+      await p.runUntilEmpty();
+      expect(e.spoken, ['First.']);
+    });
+  });
+
   test('prepared clip is stored encrypted and decrypts to a WAV', () async {
     await cues.add(sam.id, 'First.');
     await preparer(FakeEngine()).runUntilEmpty();

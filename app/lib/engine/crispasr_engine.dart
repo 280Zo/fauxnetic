@@ -365,17 +365,30 @@ class CrispasrEngine implements VoiceEngine {
   @override
   Future<void> load() => _serial(_load);
 
+  /// Starts the worker. The voice model itself may still be downloading (2026-11-18); [prepare]
+  /// checks the files of the model it opens.
   Future<void> _load() async {
-    if (!await _models.allPresent()) {
-      throw const EngineError(EngineErrorKind.modelMissing, 'Download the voice models first.');
-    }
     _worker ??= await _spawn();
+  }
+
+  /// Whether the files [m] opens are here: Qwen's talker and codec from the core download (which
+  /// may still be downloading), else what [_ready] says about its own files.
+  Future<bool> _filesPresent(TtsModel m) async {
+    if (m.files.isNotEmpty) return _ready(m);
+    for (final f in _models.models.where((f) => f.role == ModelRole.talker || f.role == ModelRole.codec)) {
+      final file = _models.path(f);
+      if (!await file.exists() || await file.length() != f.size) return false;
+    }
+    return true;
   }
 
   @override
   Future<void> prepare(Person p, Mood m, {String? model}) => _serial(() async {
     await _load();
     final want = ttsModel(await modelFor(model));
+    if (_open != want.id && !await _filesPresent(want)) {
+      throw EngineError(EngineErrorKind.modelMissing, '${want.label} is still downloading.');
+    }
     if (_open != want.id) {
       _open = null;
       _voiceKey = null;

@@ -87,10 +87,22 @@ class AppServices {
   /// The files of one optional voice model, in the same folder as the core models.
   ModelStore storeFor(TtsModel m) => ModelStore(models.dir, models: m.files);
 
-  /// Qwen comes with the core download; the others once their own files are in.
+  /// Qwen once its talker and codec are in (they download in the background after the recording
+  /// set); the others once their own files are in.
   Future<bool> modelReady(String id) async {
     final m = ttsModel(id);
-    return m.files.isEmpty || await storeFor(m).allPresent();
+    return m.files.isEmpty
+        ? await ModelStore(models.dir, models: kVoiceModels).allPresent()
+        : await storeFor(m).allPresent();
+  }
+
+  /// Whether a line for [model] (null: the default) can be made now. A line for a deleted model
+  /// uses the default, as the engine does.
+  Future<bool> lineReady(String? model) async {
+    final want = ttsModel(model ?? settings.value.model).id;
+    if (await modelReady(want)) return true;
+    final fallback = ttsModel(settings.value.model).id;
+    return fallback != want && await modelReady(fallback);
   }
 
   Stream<DownloadProgress> downloadModel(String id) {
@@ -218,6 +230,7 @@ class AppServices {
     ForegroundKeeper.init();
     final speeds = SpeedBook(File('${support.path}/speeds.json'));
     await speeds.load();
+    late final AppServices s;
     final preparer = Preparer(
       engine,
       cues,
@@ -226,13 +239,15 @@ class AppServices {
       keepFor: keepFor,
       engineLabel: () => ttsModel(engine.openModel ?? settings.value.model).label,
       speeds: speeds,
+      // Lines whose model is still downloading wait (2026-11-18).
+      ready: (m) => s.lineReady(m),
     );
     final shares = ShareService(
       cues,
       Directory('${cache.path}/share'),
       pluginDir: Directory('${cache.path}/share_plus'),
     );
-    final s = AppServices._(
+    s = AppServices._(
       models: models,
       temp: temp,
       people: people,

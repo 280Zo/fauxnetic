@@ -260,13 +260,22 @@ void main() {
     await expectLater(e.speak('Hi.', seed: 1), throwsA(isA<StateError>()));
   });
 
-  test('missing models raise modelMissing', () async {
+  test('load works with only the recording set (the voice model downloads in the background)', () async {
+    File('${dir.path}/models/talker.gguf').deleteSync();
     File('${dir.path}/models/codec.gguf').deleteSync();
-    final e = CrispasrEngine(() async => RecordingWorker(), models, people, temp);
+    await CrispasrEngine(() async => RecordingWorker(), models, people, temp).load();
+  });
+
+  test('prepare refuses a model whose files are missing', () async {
+    File('${dir.path}/models/codec.gguf').deleteSync();
+    final w = RecordingWorker();
+    final e = CrispasrEngine(() async => w, models, people, temp);
+    await e.load();
     await expectLater(
-      e.load(),
+      e.prepare(await readyPerson(people, vault), Mood.conversational),
       throwsA(isA<EngineError>().having((x) => x.kind, 'kind', EngineErrorKind.modelMissing)),
     );
+    expect(opens(w), isEmpty);
   });
 
   test('after a memory crash the engine spawns a fresh worker', () async {
