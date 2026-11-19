@@ -48,6 +48,14 @@ class MainActivity : FlutterActivity() {
                         result.success(false)
                     }
                 }
+                // Whether downloads may run: connected at all, and metered (mobile data) or not.
+                "network" -> {
+                    val cm = getSystemService(android.net.ConnectivityManager::class.java)
+                    val caps = cm?.getNetworkCapabilities(cm.activeNetwork)
+                    val connected = caps?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+                    val metered = caps?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED) != true
+                    result.success(mapOf("connected" to connected, "metered" to metered))
+                }
                 else -> result.notImplemented()
             }
         }
