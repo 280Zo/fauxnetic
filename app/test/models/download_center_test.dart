@@ -17,9 +17,14 @@ class FakeStore extends ModelStore {
   StreamController<DownloadProgress>? live;
   var downloads = 0, cancels = 0;
 
+  /// Every download fails at once with this (a server that keeps failing).
+  ModelStoreError? alwaysFail;
+
   @override
   Stream<DownloadProgress> download() {
     downloads++;
+    final f = alwaysFail;
+    if (f != null) return Stream.error(f);
     final s = StreamController<DownloadProgress>(onCancel: () => cancels++);
     live = s;
     return s.stream;
@@ -145,6 +150,15 @@ void main() {
     await settle();
     expect(center.job('qwen')!.state, JobState.downloading);
     expect(stores['talker']!.downloads, 2);
+  });
+
+  test('a network error while still connected waits before trying again', () async {
+    // Review: Wi-Fi without internet (a login page) retried in a tight loop.
+    stores['talker'] = FakeStore(voice)..alwaysFail = const ModelStoreError('interrupted', kind: ModelErrorKind.network);
+    await center.enqueue('qwen', 'Voice model', voice);
+    await Future<void>.delayed(const Duration(milliseconds: 45));
+    expect(stores['talker']!.downloads, inInclusiveRange(1, 6), reason: 'about one try per 10 ms poll, not hundreds');
+    expect(center.job('qwen')!.state, isNot(JobState.failed));
   });
 
   test('a failure shows its message and retry runs it again', () async {

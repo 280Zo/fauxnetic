@@ -177,12 +177,19 @@ class DownloadCenter extends ChangeNotifier {
           onError: (Object e) {
             _end(j);
             if (e is ModelStoreError && e.kind == ModelErrorKind.network) {
+              // Try again after the poll, not at once: the phone can say "connected" with no
+              // working internet (a Wi-Fi login page, a server down), which would otherwise loop.
               j.state = JobState.waitingNetwork;
-            } else {
-              j
-                ..state = JobState.failed
-                ..error = e is ModelStoreError ? e.message : 'The download failed.';
+              notifyListeners();
+              _wait ??= Timer(poll, () {
+                _wait = null;
+                unawaited(_pump());
+              });
+              return;
             }
+            j
+              ..state = JobState.failed
+              ..error = e is ModelStoreError ? e.message : 'The download failed.';
             notifyListeners();
             unawaited(_pump());
           },
