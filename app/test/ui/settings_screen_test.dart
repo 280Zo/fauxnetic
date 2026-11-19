@@ -205,6 +205,23 @@ void main() {
     expect(events, ['download pocket', 'default pocket']);
   });
 
+  testWidgets('a download started elsewhere updates its row when it finishes', (t) async {
+    // Review I4: the row went back to "Not downloaded" and tapping it did nothing.
+    await pump(t);
+    await scrollTo(t, 'Pocket TTS');
+    final pocket = ttsModel('pocket');
+    await t.runAsync(() => center.enqueue(pocket.id, pocket.label, pocket.files)); // from the Speak picker
+    await settle(t);
+    await t.runAsync(() => stores[pocket.files.single.name]!.finish());
+    await settle(t);
+    await settle(t);
+    expect(find.textContaining('Not downloaded (124 MB)'), findsNothing);
+    expect(find.textContaining('on this phone'), findsNWidgets(2), reason: 'VoxCPM 2 and now Pocket');
+    await t.tap(find.text('Pocket TTS'));
+    await t.pumpAndSettle();
+    expect(events, ['default pocket']);
+  });
+
   testWidgets('a row waiting for Wi-Fi says so and offers mobile data', (t) async {
     net = NetKind.metered;
     await pump(t);

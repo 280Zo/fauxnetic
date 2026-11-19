@@ -204,8 +204,9 @@ class DownloadCenter extends ChangeNotifier {
             j
               ..state = JobState.done
               ..received = j.total;
-            notifyListeners();
+            // The hook first, so listeners that reload see what it changed.
             onDone?.call(j.id);
+            notifyListeners();
             unawaited(_pump());
           },
         );

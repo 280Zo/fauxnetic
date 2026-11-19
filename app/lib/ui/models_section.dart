@@ -65,9 +65,17 @@ class _ModelsSectionState extends State<ModelsSection> {
     super.dispose();
   }
 
+  /// Downloads seen finished, so each one reloads the rows once (wherever it was started).
+  final _seenDone = <String>{};
+
   Future<void> _downloadsChanged() async {
     if (!mounted) return;
     setState(() {});
+    final done = [
+      for (final j in widget.downloads?.jobs ?? const <DownloadJob>[])
+        if (j.state == JobState.done && _seenDone.add(j.id)) j.id,
+    ];
+    if (done.isNotEmpty) await _load();
     final w = _wanted;
     if (w == null || widget.downloads?.job(w)?.state != JobState.done) return;
     _wanted = null;
