@@ -137,12 +137,8 @@ class FfiUploadNative implements UploadNative {
   }
 
   @override
-  List<TimedWord> transcribe(Float32List pcm) => wordsFromSegments(
-    _whisper.transcribePcm(
-      pcm,
-      options: const TranscribeOptions(language: 'en', wordTimestamps: true, nThreads: kThreads),
-    ),
-  );
+  List<TimedWord> transcribe(Float32List pcm) =>
+      wordsFromSegments(_whisper.transcribePcm(pcm, options: transcribeOptionsFor(ModelRole.asrBase)));
 
   @override
   void close() {

@@ -65,6 +65,20 @@ void main() {
     expect(words.every((w) => w.confidence == 0.75), isTrue);
   });
 
+  // Owner, 2026-11-23 (harness/tools/whisper_beam_test.py): beam search cut base.en's errors on his
+  // passages from 5.6% to 4.1% for 1.6x the time. The voice's transcript uses it; follow-along stays fast.
+  test('the full transcript uses beam search, the live follow-along greedy', () {
+    expect(transcribeOptionsFor(ModelRole.asrBase).strategy, 1);
+    expect(transcribeOptionsFor(ModelRole.asrTiny).strategy, 0);
+    for (final r in [ModelRole.asrBase, ModelRole.asrTiny]) {
+      final o = transcribeOptionsFor(r);
+      expect(o.language, 'en');
+      expect(o.wordTimestamps, isTrue);
+    }
+    expect(asrFactoryFor(ModelRole.asrBase)(), isA<FfiAsrApi>().having((a) => a.options.strategy, 'strategy', 1));
+    expect(asrFactoryFor(ModelRole.asrTiny)(), isA<FfiAsrApi>().having((a) => a.options.strategy, 'strategy', 0));
+  });
+
   test('transcriber maps isolate failure to an error', () async {
     final t = WhisperTranscriber(models, ModelRole.asrTiny, factory: throwingFactory);
     await t.load();

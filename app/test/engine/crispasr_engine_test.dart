@@ -516,13 +516,16 @@ void main() {
       expect(qwenFrameLimit('Hi.'), 240, reason: "never below CrispASR's own floor");
     });
 
-    test('other models get the text as typed and no limit', () async {
-      final w = RecordingWorker();
-      final e = CrispasrEngine(() async => w, models, people, temp, model: () => ttsModel('pocket'));
-      await e.prepare(await readyPerson(people, vault), Mood.conversational);
-      await e.speak('Call 555-867-5309', seed: 5);
-      expect(w.texts.single, 'Call 555-867-5309');
-      expect(w.caps.single, 0);
+    // Owner, 2026-11-23: "call 5551234567" on another model had no grouping and a 9 like "meow".
+    test('other models also hear numbers written out, with no limit', () async {
+      for (final id in ['pocket', 'voxcpm', 'voxcpm-small']) {
+        final w = RecordingWorker();
+        final e = CrispasrEngine(() async => w, models, people, temp, model: () => ttsModel(id));
+        await e.prepare(await readyPerson(people, vault), Mood.conversational);
+        await e.speak('call 5551234567', seed: 5);
+        expect(w.texts.single, 'call five five five, one two three, four five six seven', reason: id);
+        expect(w.caps.single, 0, reason: id);
+      }
     });
   });
 

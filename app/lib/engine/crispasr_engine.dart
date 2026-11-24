@@ -423,10 +423,12 @@ class CrispasrEngine implements VoiceEngine {
   Future<Float32List> speak(String text, {required int seed}) => _serial(() async {
     if (_open == null || _voiceKey == null) throw StateError('prepare() a voice before speaking');
     lastSeed = seed;
-    if (ttsModel(_open!).backend != 'qwen3-tts') return _guard((w) => w.synthesize(text, seed));
+    // Every model hears numbers written out: given raw digits, Pocket and VoxCPM read them oddly and
+    // without grouping (owner, 2026-11-23).
+    final spoken = spokenNumbers(text);
+    if (ttsModel(_open!).backend != 'qwen3-tts') return _guard((w) => w.synthesize(spoken, seed));
     // The engine stops a line that stays silent too long or runs to its limit (Qwen sometimes never
     // ends one); make it again on another path. Anything else, such as a cancel, ends it.
-    final spoken = spokenNumbers(text);
     final limit = qwenFrameLimit(spoken);
     final cancels = _cancels;
     var s = seed;

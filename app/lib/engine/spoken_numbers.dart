@@ -1,4 +1,4 @@
-/// Numbers written out the way they should be said, for Qwen3-TTS (English). The user's text is
+/// Numbers written out the way they should be said, for every voice model (English). The user's text is
 /// shown and saved unchanged; only the engine sees this. Card and phone numbers are read digit by
 /// digit; money, times, percentages, decimals, years and counts as words (stall-guard design,
 /// 2026-11-17). Everything else, including tags like [excited], is left alone.

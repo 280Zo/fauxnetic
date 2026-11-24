@@ -39,17 +39,28 @@ abstract class AsrApi {
   void close();
 }
 
+/// Whisper's options for the model in [role]. The full transcript (base.en, which a voice's
+/// transcript comes from) uses beam search: on the owner's passages it cut errors from 5.6% to 4.1%
+/// for 1.6x the time (harness/tools/whisper_beam_test.py, 2026-11-23). The live follow-along
+/// (tiny.en) stays greedy, to keep up with speech.
+TranscribeOptions transcribeOptionsFor(ModelRole role) => TranscribeOptions(
+  strategy: role == ModelRole.asrBase ? 1 : 0,
+  language: 'en',
+  wordTimestamps: true,
+  nThreads: kThreads,
+);
+
 class FfiAsrApi implements AsrApi {
+  FfiAsrApi(this.options);
+  final TranscribeOptions options;
   CrispASR? _asr;
 
   @override
   void open(String model) => _asr = CrispASR(model, libPath: 'libcrispasr.so');
 
   @override
-  List<Segment> transcribe(Float32List pcm) => (_asr ?? (throw StateError('transcriber not open'))).transcribePcm(
-    pcm,
-    options: const TranscribeOptions(language: 'en', wordTimestamps: true, nThreads: kThreads),
-  );
+  List<Segment> transcribe(Float32List pcm) =>
+      (_asr ?? (throw StateError('transcriber not open'))).transcribePcm(pcm, options: options);
 
   @override
   void close() {
@@ -58,7 +69,11 @@ class FfiAsrApi implements AsrApi {
   }
 }
 
-AsrApi ffiAsrFactory() => FfiAsrApi();
+AsrApi _ffiBase() => FfiAsrApi(transcribeOptionsFor(ModelRole.asrBase));
+AsrApi _ffiTiny() => FfiAsrApi(transcribeOptionsFor(ModelRole.asrTiny));
+
+/// Makes the Whisper caller for [role], inside the worker isolate.
+AsrApi Function() asrFactoryFor(ModelRole role) => role == ModelRole.asrBase ? _ffiBase : _ffiTiny;
 
 /// Whisper reports sub-word tokens; a token starting with a space begins a new word. A word's
 /// confidence is its least certain token. Segments without token timing are spread evenly.
@@ -94,7 +109,8 @@ List<TimedWord> wordsFromSegments(List<Segment> segments) {
 
 /// Runs Whisper (the model for [role]) in its own isolate so recording and the UI stay smooth.
 class WhisperTranscriber implements Transcriber {
-  WhisperTranscriber(this._models, this._role, {this._factory = ffiAsrFactory});
+  WhisperTranscriber(this._models, this._role, {AsrApi Function()? factory})
+    : _factory = factory ?? asrFactoryFor(_role);
 
   final ModelStore _models;
   final ModelRole _role;
