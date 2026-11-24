@@ -31,6 +31,7 @@ import 'recording/reference_builder.dart';
 import 'recording/scripts.dart';
 import 'recording/takes.dart';
 import 'recording/transcriber.dart';
+import 'recording/voice_cleaner.dart';
 import 'settings/settings_store.dart';
 import 'storage/storage_report.dart';
 import 'storage/temp_sweeper.dart';
@@ -428,6 +429,7 @@ class AppServices {
       builder,
       replace: replace,
       earlier: earlier,
+      cleaner: rnnoiseCleaner,
     );
     return ReadingSession(c, [follow, full]);
   }

@@ -13,6 +13,7 @@ import 'scripts.dart';
 import 'take_check.dart';
 import 'takes.dart';
 import 'transcriber.dart';
+import 'voice_cleaner.dart';
 
 const kNothingUsableMessage = 'Read the passage or answer the question to make a voice.';
 const kBuildFailedMessage = "Couldn't build the voice. Your recordings are kept; try again.";
@@ -42,6 +43,9 @@ const _missedWordQuiet = 2.0;
 const _mostOfLine = 0.6;
 const _openQuiet = 3.0;
 
+/// A take rejected as noisy while the voice cleaner is off.
+const kNoisyOfferHint = "There's a lot of background noise. Turn on Clean up background noise and try again.";
+
 /// One guided reading session for one mood: record each line, check it, keep the good takes,
 /// then build the mood's reference. Nothing is saved for a take that was interrupted.
 enum VoiceFill { basic, good, full }
@@ -59,6 +63,7 @@ class ReadingController extends ChangeNotifier {
     Random? random,
     this.replace = false,
     List<Take> earlier = const [],
+    this.cleaner,
   }) : _random = random ?? Random(),
        _earlier = earlier {
     if (mood == Mood.conversational) core = pickCoreSession(_random, earlier: earlier);
@@ -80,6 +85,25 @@ class ReadingController extends ChangeNotifier {
   final PeopleRepo _people;
   final ReferenceBuilder _builder;
   final Random _random;
+
+  /// Cleans background noise from a take when [cleanNoise] is on; null: no cleaner on offer.
+  final TakeCleaner? cleaner;
+
+  /// Whether this session can clean background noise from its takes.
+  bool get canClean => cleaner != null;
+
+  /// "Clean up background noise": off at the start of every session (owner, 2026-11-23).
+  bool get cleanNoise => _cleanNoise;
+  set cleanNoise(bool on) {
+    _cleanNoise = on && canClean;
+    noisyOffer = false;
+    _changed();
+  }
+
+  var _cleanNoise = false;
+
+  /// The last take was rejected as noisy with the cleaner off: the screen offers to turn it on.
+  var noisyOffer = false;
 
   /// The conversational session: one passage, then one question; null for mood packs.
   CoreSession? core;
@@ -409,9 +433,14 @@ class ReadingController extends ChangeNotifier {
     _changed();
     await sub?.cancel();
     await _mic.stop();
-    final pcm = _joined();
+    final raw = _joined();
     _chunks.clear();
     _samples = 0;
+    noisyOffer = false;
+    final clean = cleaner;
+    // With the cleaner on, everything from here on (checks, words, the kept take) uses the clean take.
+    final pcm = _cleanNoise && clean != null ? await clean(raw) : raw;
+    if (session != _session) return;
 
     List<TimedWord>? heard;
     try {
@@ -433,7 +462,8 @@ class ReadingController extends ChangeNotifier {
       }
     }
     if (problem != null || message != null) {
-      hint = message ?? takeHint(problem);
+      noisyOffer = problem == TakeProblem.noisy && canClean && !_cleanNoise;
+      hint = message ?? (noisyOffer ? kNoisyOfferHint : takeHint(problem));
       spokenWords = 0;
       checking = false;
       _changed();

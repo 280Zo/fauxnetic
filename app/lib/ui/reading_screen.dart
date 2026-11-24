@@ -229,6 +229,19 @@ class _ReadingScreenState extends State<ReadingScreen> {
             c.hasPausedTake ? 'Paused. Tap Resume to go on.' : 'Paused. Tap Record to go on.',
             style: TextStyle(color: context.colors.muted),
           )
+        else if (c.noisyOffer)
+          // Rejected for noise with the cleaner off: said plainly, with the fix one tap away.
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  c.hint!,
+                  style: TextStyle(color: context.colors.ink, fontWeight: FontWeight.w600),
+                ),
+              ),
+              TextButton(onPressed: () => c.cleanNoise = true, child: const Text('Turn on')),
+            ],
+          )
         else if (c.hint != null)
           Text(c.hint!, style: TextStyle(color: context.colors.muted)),
         if (c.error != null) ...[
@@ -238,6 +251,14 @@ class _ReadingScreenState extends State<ReadingScreen> {
             child: TextButton(onPressed: widget.openSettings, child: const Text('Open settings')),
           ),
         ],
+        if (c.canClean)
+          Row(
+            children: [
+              // One line only: with a second, the longest passage no longer fit an A54 screen.
+              const Expanded(child: Text('Clean up background noise')),
+              Switch(value: c.cleanNoise, onChanged: c.recording || c.checking ? null : (on) => c.cleanNoise = on),
+            ],
+          ),
         const SizedBox(height: 12),
         Row(
           children: [

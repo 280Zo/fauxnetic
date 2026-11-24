@@ -44,9 +44,20 @@ void main() {
     WidgetTester t, {
     Mood mood = Mood.conversational,
     Future<void> Function()? settings,
+    bool cleaner = false,
   }) async {
     final sam = await t.runAsync(() => people.create('Sam', PersonSource.recorded));
-    final c = ReadingController(sam!, mood, mic, follow, full, takes, people, builder);
+    final c = ReadingController(
+      sam!,
+      mood,
+      mic,
+      follow,
+      full,
+      takes,
+      people,
+      builder,
+      cleaner: cleaner ? (pcm) async => pcm : null,
+    );
     full.next = () => words(c.line.text);
     await t.pumpWidget(
       MaterialApp(
@@ -80,6 +91,46 @@ void main() {
       await t.runAsync(c.changePassage);
     }
     expect(seen, kPassages.toSet());
+  });
+
+  testWidgets('with the noise cleaner switch, every passage still fits on an A54-sized screen', (t) async {
+    screen(t, 411, 891);
+    final c = await pump(t, cleaner: true);
+    expect(find.text('Clean up background noise'), findsOneWidget);
+    for (var i = 0; i < 30; i++) {
+      await t.pump();
+      expect(scriptScroll(t).maxScrollExtent, 0, reason: 'no scrolling needed: ${c.line.text.substring(0, 20)}');
+      await t.runAsync(c.changePassage);
+    }
+  });
+
+  testWidgets('the noise cleaner switch starts off and turns on', (t) async {
+    final c = await pump(t, cleaner: true);
+    expect(t.widget<Switch>(find.byType(Switch)).value, isFalse);
+    await t.tap(find.byType(Switch));
+    await t.pump();
+    expect(c.cleanNoise, isTrue);
+    expect(t.widget<Switch>(find.byType(Switch)).value, isTrue);
+  });
+
+  testWidgets('no cleaner, no switch', (t) async {
+    await pump(t);
+    expect(find.text('Clean up background noise'), findsNothing);
+  });
+
+  testWidgets('a noisy take offers the cleaner with a Turn on button', (t) async {
+    final c = await pump(t, cleaner: true);
+    await t.runAsync(() async {
+      await c.record();
+      await mic.say(bursts(-25, -40));
+      await c.stopAndCheck();
+    });
+    await t.pump();
+    expect(find.text(kNoisyOfferHint), findsOneWidget);
+    await t.tap(find.text('Turn on'));
+    await t.pump();
+    expect(c.cleanNoise, isTrue);
+    expect(find.text('Turn on'), findsNothing);
   });
 
   testWidgets('on a screen too small to fit, the text follows the spoken word', (t) async {

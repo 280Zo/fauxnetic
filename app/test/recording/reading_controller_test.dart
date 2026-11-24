@@ -183,6 +183,91 @@ void main() {
     expect(saved.mood, Mood.conversational);
   });
 
+  group('voice cleaner', () {
+    // A noisy room: the voice stands out by only 15 dB.
+    Float32List noisyTake() => bursts(-25, -40);
+    late List<int> cleaned;
+
+    ReadingController cleaning(Future<Float32List> Function(Float32List) clean) {
+      cleaned = [];
+      final c = ReadingController(
+        sam,
+        Mood.conversational,
+        mic,
+        follow,
+        full,
+        takes,
+        people,
+        builder,
+        random: Random(1),
+        cleaner: (pcm) {
+          cleaned.add(pcm.length);
+          return clean(pcm);
+        },
+      );
+      full.next = () => words(c.line.text);
+      return c;
+    }
+
+    Future<void> read(ReadingController c, Float32List pcm) async {
+      await c.record();
+      await mic.say(pcm);
+      await c.stopAndCheck();
+    }
+
+    test('is off at the start of a session and leaves takes as recorded', () async {
+      final c = cleaning((pcm) async => goodTake());
+      expect(c.canClean, isTrue);
+      expect(c.cleanNoise, isFalse);
+      await read(c, noisyTake());
+      expect(cleaned, isEmpty);
+      expect(c.index, 0, reason: 'the noisy take is rejected as before');
+    });
+
+    test('with it off, a noisy take says so plainly and offers it', () async {
+      final c = cleaning((pcm) async => goodTake());
+      await read(c, noisyTake());
+      expect(c.noisyOffer, isTrue);
+      expect(c.hint, kNoisyOfferHint);
+      c.cleanNoise = true;
+      expect(c.noisyOffer, isFalse, reason: 'turning it on answers the offer');
+    });
+
+    test('with it on, the checks and the saved take use the cleaned audio', () async {
+      final c = cleaning((pcm) async => goodTake());
+      c.cleanNoise = true;
+      await read(c, noisyTake());
+      expect(cleaned, hasLength(1));
+      expect(c.index, 1, reason: 'the cleaned take passes the noise check');
+      final saved = await takes.samples((await takes.forPerson(sam.id)).single);
+      // The cleaned take's pauses are near silent (-70); the raw take's were at -40.
+      final frames = [
+        for (var i = 0; i + 320 <= saved.length; i += 320)
+          sqrt(saved.sublist(i, i + 320).fold(0.0, (s, v) => s + v * v) / 320),
+      ]..sort();
+      expect(20 * log(frames[frames.length ~/ 10] + 1e-12) / ln10, lessThan(-55));
+    });
+
+    test('with it on, a take still noisy after cleaning gets the plain hint, no offer', () async {
+      final c = cleaning((pcm) async => pcm);
+      c.cleanNoise = true;
+      await read(c, noisyTake());
+      expect(c.index, 0);
+      expect(c.noisyOffer, isFalse);
+      expect(c.hint, "It's noisy here. Try a quieter spot.");
+    });
+
+    test('without a cleaner the switch is not offered', () async {
+      final c = controller();
+      expect(c.canClean, isFalse);
+      await c.record();
+      await mic.say(noisyTake());
+      await c.stopAndCheck();
+      expect(c.noisyOffer, isFalse);
+      expect(c.hint, "It's noisy here. Try a quieter spot.");
+    });
+  });
+
   test('skip advances without a take', () async {
     final c = controller();
     await c.record();
