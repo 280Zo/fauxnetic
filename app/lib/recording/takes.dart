@@ -22,7 +22,14 @@ class Take {
     required this.file,
     this.prompt,
     this.phrase,
+    this.story = false,
   });
+
+  /// A line of a story read to make the main voice sound more like the person.
+  final bool story;
+
+  /// The passage read in the core session (not a sentence, a story line or an answer).
+  bool get isPassage => fromScript && phrase == null && !story;
 
   final String id;
   final String personId;
@@ -57,6 +64,7 @@ class Take {
     'file': file,
     'prompt': prompt,
     'phrase': phrase,
+    'story': story,
   };
 
   factory Take.fromJson(Map<String, Object?> j) => Take(
@@ -70,6 +78,7 @@ class Take {
     file: j['file']! as String,
     prompt: j['prompt'] as String?,
     phrase: j['phrase'] as String?,
+    story: j['story'] as bool? ?? false,
   );
 }
 
@@ -109,6 +118,7 @@ class TakeStore {
     required double score,
     String? prompt,
     String? phrase,
+    bool story = false,
   }) async {
     final id = _newId();
     final rel = 'takes/$id.bin';
@@ -124,6 +134,7 @@ class TakeStore {
       file: rel,
       prompt: prompt,
       phrase: phrase,
+      story: story,
     );
     await _locked(() async => _save([...await _all(), t]));
     return t;
@@ -143,6 +154,7 @@ class TakeStore {
       file: take.file,
       prompt: take.prompt,
       phrase: take.phrase,
+      story: take.story,
     );
     await _save([for (final t in all) t.id == take.id ? fixed : t]);
     return fixed;

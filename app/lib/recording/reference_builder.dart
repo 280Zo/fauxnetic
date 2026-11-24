@@ -60,12 +60,20 @@ Float32List resample16to24(Float32List x) => resample(x, 16000, kRefRate);
 /// they hold at least 7 s of speech; otherwise the passage does.
 const kAnswerMinSeconds = 7.0;
 
+/// A story read after the voice was made (owner, 2026-11-23: "make it sound more like you") is used
+/// for the main voice once it holds this much speech, before the passage. Relaxed storytelling is
+/// closer to how people talk than the passage; not yet measured against it (answers are, above).
+const kStoryMinSeconds = 8.0;
+
 List<Take> coreReferenceTakes(List<Take> conversational) {
   final answers = conversational.where((t) => !t.fromScript).toList();
+  final story = conversational.where((t) => t.story).toList();
   // The plain and question sentences are read too, but too short to stand in for the passage.
-  final passage = conversational.where((t) => t.fromScript && t.phrase == null).toList();
-  final answerSeconds = answers.fold<double>(0, (s, t) => s + t.seconds);
-  if (answerSeconds >= kAnswerMinSeconds || passage.isEmpty) return answers;
+  final passage = conversational.where((t) => t.isPassage).toList();
+  double seconds(List<Take> ts) => ts.fold<double>(0, (s, t) => s + t.seconds);
+  if (seconds(answers) >= kAnswerMinSeconds) return answers;
+  if (seconds(story) >= kStoryMinSeconds) return story;
+  if (passage.isEmpty) return answers;
   return passage;
 }
 

@@ -46,6 +46,7 @@ void main() {
     Mood mood = Mood.conversational,
     Future<void> Function()? settings,
     bool cleaner = false,
+    SessionKind? kind,
   }) async {
     final sam = await t.runAsync(() => people.create('Sam', PersonSource.recorded));
     final c = ReadingController(
@@ -58,6 +59,7 @@ void main() {
       people,
       builder,
       cleaner: cleaner ? (pcm) async => pcm : null,
+      kind: kind,
     );
     full.next = () => words(c.line.text);
     await t.pumpWidget(
@@ -69,8 +71,9 @@ void main() {
     return c;
   }
 
-  /// Past the passage and the five sentences.
+  /// Past a story session's story, to its question.
   Future<void> toQuestion(ReadingController c) async {
+    expect(c.lines.any((l) => l.openPrompt), isTrue, reason: 'only a story session asks a question');
     while (!c.line.openPrompt) {
       await c.skip();
     }
@@ -88,28 +91,30 @@ void main() {
     addTearDown(t.view.reset);
   }
 
+  /// Swaps passages until each was shown; returns the start of each that needed scrolling.
+  Future<List<String>> tooLong(WidgetTester t, ReadingController c) async {
+    final seen = <String>{}, over = <String>{};
+    for (var i = 0; i < 400 && seen.length < kPassages.length; i++) {
+      await t.pump();
+      seen.add(c.line.text);
+      if (scriptScroll(t).maxScrollExtent > 0) over.add('${c.line.text.substring(0, 30)}…');
+      await t.runAsync(c.changePassage);
+    }
+    expect(seen, kPassages.toSet(), reason: 'every passage was shown');
+    return over.toList();
+  }
+
   testWidgets('every passage fits on an A54-sized screen', (t) async {
     screen(t, 411, 891); // Galaxy A54: 1080 x 2340 at 2.625
     final c = await pump(t);
-    final seen = <String>{};
-    for (var i = 0; i < 30 && seen.length < kPassages.length; i++) {
-      seen.add(c.line.text);
-      await t.pump();
-      expect(scriptScroll(t).maxScrollExtent, 0, reason: 'no scrolling needed: ${c.line.text.substring(0, 20)}');
-      await t.runAsync(c.changePassage);
-    }
-    expect(seen, kPassages.toSet());
+    expect(await tooLong(t, c), isEmpty);
   });
 
   testWidgets('with the noise cleaner switch, every passage still fits on an A54-sized screen', (t) async {
     screen(t, 411, 891);
     final c = await pump(t, cleaner: true);
     expect(find.text('Clean up background noise'), findsOneWidget);
-    for (var i = 0; i < 30; i++) {
-      await t.pump();
-      expect(scriptScroll(t).maxScrollExtent, 0, reason: 'no scrolling needed: ${c.line.text.substring(0, 20)}');
-      await t.runAsync(c.changePassage);
-    }
+    expect(await tooLong(t, c), isEmpty);
   });
 
   testWidgets('an off switch looks switchable, not disabled', (t) async {
@@ -195,10 +200,10 @@ void main() {
   });
 
   testWidgets('core line shows the exact copy', (t) async {
-    final c = await pump(t);
-    expect(find.text('Line 1 of 7'), findsOneWidget);
-    expect(find.text("say it like you'd say it to a friend"), findsOneWidget);
-    expect(find.text('Next: ${c.lines[1].text}'), findsOneWidget);
+    await pump(t);
+    expect(find.text('Line 1 of 1'), findsOneWidget);
+    expect(find.text("read it like you're leaving a message"), findsOneWidget);
+    expect(find.textContaining('Next:'), findsNothing, reason: 'the passage is the whole first session');
     for (final label in ['Redo', 'Record', 'Skip']) {
       expect(find.text(label), findsOneWidget, reason: label);
     }
@@ -297,7 +302,7 @@ void main() {
   });
 
   testWidgets('question shows another question', (t) async {
-    final c = await pump(t);
+    final c = await pump(t, kind: SessionKind.story);
     await t.runAsync(() => toQuestion(c));
     await t.pump();
     final first = c.line.text;
@@ -307,9 +312,9 @@ void main() {
     expect(find.text('Try a different passage'), findsNothing);
   });
 
-  testWidgets('the meter shows under questions, not under the passage', (t) async {
-    final c = await pump(t);
-    expect(find.byKey(const Key('voiceMeter')), findsNothing, reason: 'reading the passage');
+  testWidgets('the meter shows under the question, not under the story', (t) async {
+    final c = await pump(t, kind: SessionKind.story);
+    expect(find.byKey(const Key('voiceMeter')), findsNothing, reason: 'reading the story');
     await t.runAsync(() => toQuestion(c));
     await t.pump();
     expect(find.byKey(const Key('voiceMeter')), findsOneWidget);
@@ -319,7 +324,7 @@ void main() {
   });
 
   testWidgets('a short answer offers one more question and Finish', (t) async {
-    final c = await pump(t);
+    final c = await pump(t, kind: SessionKind.story);
     await t.runAsync(() => toQuestion(c));
     full.next = () => words('Flying, obviously, every single day.');
     await t.runAsync(() async {
@@ -337,7 +342,17 @@ void main() {
   testWidgets('after answers the words are shown to check; a tap fixes one; then the voice is built', (t) async {
     Person? built;
     final sam = await t.runAsync(() => people.create('Sam', PersonSource.recorded));
-    final c = ReadingController(sam!, Mood.conversational, mic, follow, full, takes, people, builder);
+    final c = ReadingController(
+      sam!,
+      Mood.conversational,
+      mic,
+      follow,
+      full,
+      takes,
+      people,
+      builder,
+      kind: SessionKind.story,
+    );
     full.next = () => words(c.line.text);
     await t.pumpWidget(
       MaterialApp(
@@ -382,13 +397,19 @@ void main() {
     expect(meterCopy(VoiceFill.full), ('Full', "Full — that's all a voice can use"));
   });
 
-  testWidgets('a sentence line shows its scene', (t) async {
-    final c = await pump(t);
+  testWidgets('a feelings session shows each sentence with its scene', (t) async {
+    final c = await pump(t, kind: SessionKind.feelings);
     await t.runAsync(c.skip);
     await t.pump();
-    expect(find.text('Line 2 of 7'), findsOneWidget);
+    expect(find.text('Line 2 of 5'), findsOneWidget);
     expect(find.text('${c.line.scene}:'), findsOneWidget);
     expect(t.widget<RichText>(find.byKey(const Key('script-line'))).text.toPlainText(), c.line.text);
+  });
+
+  testWidgets('a story session says to read it like telling a friend', (t) async {
+    await pump(t, kind: SessionKind.story);
+    expect(find.text('Line 1 of 6'), findsOneWidget, reason: 'five story lines, then the question');
+    expect(find.text("read it like you're telling a friend"), findsOneWidget);
   });
 
   testWidgets('an excited session shows each sentence with its scene', (t) async {

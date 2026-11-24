@@ -190,6 +190,13 @@ void main() {
   // player for the selected line.
   Finder inDock(Finder f) => find.descendant(of: find.byKey(const Key('dock')), matching: f);
 
+  testWidgets('with nothing yet, it says what to do in plain words', (t) async {
+    // Owner, 2026-11-23: "lines" read as nonsense.
+    await pump(t);
+    expect(find.text('Type something for Sam to say.'), findsOneWidget);
+    expect(find.textContaining('lines'), findsNothing);
+  });
+
   testWidgets('the dock is the text box when nothing is selected', (t) async {
     final c = await pump(t);
     c.setItems([cue('a', CueStatus.ready, 'One.')]);

@@ -60,20 +60,40 @@ void main() {
     await c.stopAndCheck();
   }
 
-  /// Skips the passage and the five sentences.
+  /// Skips a story session's story to its question.
   Future<void> toQuestion(ReadingController c) async {
+    expect(c.lines.any((l) => l.openPrompt), isTrue, reason: 'only a story session asks a question');
     while (!c.line.openPrompt) {
       await c.skip();
     }
   }
 
-  /// After the passage: skips the five sentences to the question.
-  Future<void> skipSentences(ReadingController c) => toQuestion(c);
+  /// A story session (owner, 2026-11-23: the question in the person's own words comes after the
+  /// story, not in the first session), at its question.
+  Future<ReadingController> asking({Random? random, List<Take>? earlier, bool replace = false}) async {
+    final c = ReadingController(
+      sam,
+      Mood.conversational,
+      mic,
+      follow,
+      full,
+      takes,
+      people,
+      builder,
+      random: random ?? Random(1),
+      kind: SessionKind.story,
+      earlier: earlier ?? await takes.forPerson(sam.id),
+      replace: replace,
+    );
+    full.next = () => words(c.line.text);
+    await toQuestion(c);
+    return c;
+  }
 
-  /// Reads the passage well, then skips the sentences.
-  Future<void> readPassage(ReadingController c) async {
-    await readGood(c);
-    await skipSentences(c);
+  /// Reads the passage well in a first session, then opens a story session at its question.
+  Future<ReadingController> passageThenAsking() async {
+    await readGood(controller());
+    return asking();
   }
 
   test('follow-along marks spoken words', () async {
@@ -152,10 +172,7 @@ void main() {
   });
 
   test('an open question stops after three seconds of quiet, not before speech', () async {
-    final c = controller();
-    while (!c.line.openPrompt) {
-      await c.skip();
-    }
+    final c = await asking();
     full.next = () => words('Honestly the traffic this morning was ridiculous');
     await c.record();
     await mic.pause(4);
@@ -200,23 +217,73 @@ void main() {
     expect(saved.mood, Mood.conversational);
   });
 
-  group('one sentence, five ways', () {
-    test('a core session is the passage, one sentence said five ways, then a question', () {
+  // Owner, 2026-11-23: the main voice first (passage and a question), then a story to make it sound
+  // more like the person, then feelings (one sentence said five ways); each one optional.
+  group('the three parts', () {
+    ReadingController session(SessionKind kind, {List<Take> earlier = const []}) {
+      final c = ReadingController(
+        sam,
+        Mood.conversational,
+        mic,
+        follow,
+        full,
+        takes,
+        people,
+        builder,
+        random: Random(1),
+        kind: kind,
+        earlier: earlier,
+      );
+      full.next = () => words(c.line.text);
+      return c;
+    }
+
+    Future<Person> mainVoice() async {
       final c = controller();
-      expect(c.lines, hasLength(7));
-      expect(c.lines.first.phrase, isNull);
-      expect([for (final l in c.lines.sublist(1, 6)) l.phrase], PhraseTone.values);
-      expect(c.lines.sublist(1, 6).every((l) => (l.scene ?? '').isNotEmpty), isTrue);
+      await readGood(c); // the passage
+      while (!c.done) {
+        await c.skip();
+      }
+      return sam = (await c.finish())!;
+    }
+
+    test('a core session is the passage alone', () {
+      final c = controller();
+      expect(c.kind, SessionKind.core);
+      expect(c.lines, hasLength(1));
+      expect(kPassages, contains(c.lines.first.text));
+    });
+
+    test('a story session reads a five-line story, kept for the main voice, then asks a question', () async {
+      await mainVoice();
+      final c = session(SessionKind.story);
+      expect(c.lines, hasLength(6));
+      expect(c.lines.take(5).every((l) => l.story), isTrue);
       expect(c.lines.last.openPrompt, isTrue);
+      while (!c.line.openPrompt) {
+        await readGood(c);
+      }
+      await c.skip();
+      expect(c.done, isTrue);
+      final saved = (await takes.forPerson(sam.id)).where((t) => t.story).toList();
+      expect(saved, hasLength(5));
+      expect(saved.every((t) => t.mood == Mood.conversational && t.fromScript && !t.isPassage), isTrue);
+      final p = await c.finish();
+      expect(
+        p!.voices[Mood.conversational]!.refText,
+        startsWith(c.lines.first.text),
+        reason: 'the story makes the voice',
+      );
     });
 
     test('each sentence is kept with its mood and marked as a sentence', () async {
-      final c = controller();
-      await c.skip(); // the passage
+      await mainVoice();
+      final c = session(SessionKind.feelings);
+      expect([for (final l in c.lines) l.phrase], PhraseTone.values);
       for (var i = 0; i < 5; i++) {
         await readGood(c);
       }
-      final saved = await takes.forPerson(sam.id);
+      final saved = (await takes.forPerson(sam.id)).where((t) => t.phrase != null);
       expect(
         {for (final t in saved) t.phrase: t.mood},
         {
@@ -227,34 +294,41 @@ void main() {
           'worried': Mood.worried,
         },
       );
-      expect(c.line.openPrompt, isTrue);
+      expect(c.done, isTrue);
     });
 
-    test('finishing makes excited, annoyed and worried voices: the passage, then the sentence', () async {
-      final c = controller();
-      for (var i = 0; i < 6; i++) {
-        await readGood(c); // the passage and the five sentences
-      }
-      while (!c.done) {
-        await c.skip();
+    test('finishing feelings makes excited, annoyed and worried voices: the passage, then the sentence', () async {
+      final before = (await mainVoice()).voices[Mood.conversational]!;
+      final passage = before.refText;
+      final c = session(SessionKind.feelings);
+      for (var i = 0; i < 5; i++) {
+        await readGood(c);
       }
       final p = await c.finish();
-      expect(p, isNotNull);
+      expect(p, isNotNull, reason: c.error);
       final excited = c.lines.firstWhere((l) => l.phrase == PhraseTone.excited).text;
       for (final m in [Mood.excited, Mood.annoyed, Mood.worried]) {
         expect(p!.recorded(m), isTrue, reason: m.name);
-        expect(p.voices[m]!.refText, startsWith(c.lines.first.text.substring(0, 20)));
+        expect(p.voices[m]!.refText, startsWith(passage.substring(0, 20)));
         expect(p.voices[m]!.seconds, lessThanOrEqualTo(15));
       }
       expect(p!.voices[Mood.excited]!.refText, endsWith(excited));
-      expect(p.voices[Mood.conversational]!.refText, c.lines.first.text, reason: 'the main voice is the passage alone');
+      expect(p.voices[Mood.conversational]!.clipFile, before.clipFile, reason: 'feelings leave the main voice alone');
+    });
+
+    test('feelings with nothing recorded say so', () async {
+      await mainVoice();
+      final c = session(SessionKind.feelings);
+      while (!c.done) {
+        await c.skip();
+      }
+      expect(await c.finish(), isNull);
+      expect(c.error, kNotEnoughMoodSpeechMessage);
     });
 
     test('continuing an unfinished session starts at the first line not recorded, same text', () async {
       final first = controller();
       await readGood(first); // passage
-      await readGood(first); // plain
-      await readGood(first); // question
       final earlier = await takes.forPerson(sam.id);
       final c = ReadingController(
         sam,
@@ -270,19 +344,11 @@ void main() {
         resume: true,
       );
       full.next = () => words(c.line.text);
-      expect(c.lines.map((l) => l.text).take(6), first.lines.map((l) => l.text).take(6));
-      expect(c.index, 3);
-      expect(c.line.phrase, PhraseTone.excited);
-      while (!c.line.openPrompt) {
-        await readGood(c);
-      }
-      while (!c.done) {
-        await c.skip();
-      }
+      expect(c.lines.first.text, first.lines.first.text);
+      expect(c.done, isTrue, reason: 'the passage was read: the voice is made straight away');
       final p = await c.finish();
       expect(p!.ready, isTrue);
       expect(p.voices[Mood.conversational]!.refText, first.lines.first.text, reason: 'the earlier passage take');
-      expect(p.recorded(Mood.excited), isTrue);
     });
 
     test('an excited session reads three excited sentences, each with its scene', () {
@@ -378,7 +444,7 @@ void main() {
     });
 
     test('Record takes the microphone over, and listening comes back after the take', () async {
-      final c = controller();
+      final c = controller(Mood.excited); // more than one line, so the session goes on after the take
       await c.listen();
       await readGood(c);
       expect(c.index, 1);
@@ -604,8 +670,7 @@ void main() {
   });
 
   test('another question while paused starts a fresh answer', () async {
-    final c = controller();
-    await toQuestion(c);
+    final c = await asking();
     await c.record();
     await mic.say(goodTake().sublist(0, 16000));
     await c.pause();
@@ -658,24 +723,26 @@ void main() {
 
   Float32List longAnswer() => Float32List.fromList([...goodTake(), ...goodTake()]);
 
-  test('core session is one passage, five sentences, then one question', () {
+  test('core session is the passage alone; the story session ends with a question', () async {
     final c = controller();
-    expect(c.total, 7);
+    expect(c.total, 1);
     expect(kPassages, contains(c.lines[0].text));
     expect(c.lines[0].openPrompt, isFalse);
-    expect(kPrompts, contains(c.lines[6].text));
-    expect(c.lines[6].openPrompt, isTrue);
+    final s = await asking();
+    expect(s.total, 6);
+    expect(s.lines.take(5).every((l) => l.story), isTrue);
+    expect(kPrompts, contains(s.lines.last.text));
+    expect(s.lines.last.openPrompt, isTrue);
   });
 
   test('another question swaps only the prompt', () async {
-    final c = controller();
-    await toQuestion(c);
-    final passage = c.lines[0].text, prompt = c.line.text;
+    final c = await asking();
+    final story = c.lines[0].text, prompt = c.line.text;
     c.nextPrompt();
     expect(c.line.text, isNot(prompt));
     expect(kPrompts, contains(c.line.text));
-    expect(c.lines[0].text, passage);
-    expect(c.index, 6);
+    expect(c.lines[0].text, story);
+    expect(c.index, 5);
   });
 
   test('changing the passage drops its take', () async {
@@ -756,9 +823,8 @@ void main() {
   });
 
   test('silence around an answer does not count toward its 7 s', () async {
-    final c = controller();
-    final passage = c.line.text;
-    await readPassage(c);
+    final c = await passageThenAsking();
+    final passage = (await takes.forPerson(sam.id)).single.text;
     full.next = () => words('Flying, obviously, every single day.');
     await c.record();
     await mic.say(Float32List.fromList([...Float32List(16000), ...seconds(4), ...Float32List(3 * 16000)]));
@@ -772,8 +838,7 @@ void main() {
   });
 
   test('a long answer is cut and stores the words heard in what is kept', () async {
-    final c = controller();
-    await toQuestion(c);
+    final c = await asking();
     final said = List.generate(50, (i) => 'word$i').join(' ');
     final kept = said.split(' ').take(33).join(' ');
     // Meme (2026-11-16): the audio ran a word past its transcript, and Qwen skipped the start of lines.
@@ -798,8 +863,7 @@ void main() {
     }
 
     test('a short answer asks one more question instead of finishing', () async {
-      final c = controller();
-      await readPassage(c);
+      final c = await passageThenAsking();
       final first = c.line.text;
       expect(c.fill, VoiceFill.basic);
       await answer(c, 4, 'Flying, obviously, every single day.');
@@ -812,8 +876,7 @@ void main() {
     });
 
     test('answers adding up to 7 s finish by themselves', () async {
-      final c = controller();
-      await readPassage(c);
+      final c = await passageThenAsking();
       await answer(c, 4, 'Flying, obviously, every single day.');
       await answer(c, 4, 'Pizza with pineapple, and I will not apologize.');
       expect(c.done, isTrue);
@@ -821,9 +884,8 @@ void main() {
     });
 
     test('Finish at Basic builds from the passage', () async {
-      final c = controller();
-      final passage = c.line.text;
-      await readPassage(c);
+      final c = await passageThenAsking();
+      final passage = (await takes.forPerson(sam.id)).single.text;
       await answer(c, 4, 'Flying, obviously, every single day.');
       c.finishAnswers();
       expect(c.done, isTrue);
@@ -832,8 +894,7 @@ void main() {
     });
 
     test('earlier answers count when adding more, not when re-recording', () async {
-      final first = controller();
-      await toQuestion(first);
+      final first = await asking();
       await answer(first, 8, 'A long first answer that easily fills eight seconds of talking.');
       sam = (await first.finish())!;
       final earlier = await takes.forPerson(sam.id);
@@ -850,6 +911,7 @@ void main() {
           random: Random(2),
           earlier: earlier,
           replace: replace,
+          kind: SessionKind.story,
         );
         full.next = () => words(c.line.text);
         return c;
@@ -867,8 +929,7 @@ void main() {
     test('answers the voice will use wait for a word check, and fixes reach the voice', () async {
       // Owner, 2026-11-16: "I have to worry" for "I don't have to worry" sent Qwen into lines
       // that never ended.
-      final c = controller();
-      await readPassage(c);
+      final c = await passageThenAsking();
       await answer(c, 4, 'I have to worry about falling.');
       await answer(c, 4, 'Pizza with pineapple, obviously.');
       expect(c.done, isTrue);
@@ -885,8 +946,7 @@ void main() {
     });
 
     test('a voice from the passage needs no word check', () async {
-      final c = controller();
-      await readPassage(c);
+      final c = await passageThenAsking();
       await answer(c, 4, 'Flying, obviously, every single day.');
       c.finishAnswers();
       expect(c.done, isTrue);
@@ -895,16 +955,14 @@ void main() {
 
     test('fill is full once 15 s are spoken', () async {
       // A saved answer is cut in a pause before 15 s, so Full shows while still talking: the cue to stop.
-      final c = controller();
-      await toQuestion(c);
+      final c = await asking();
       await c.record();
       await mic.say(seconds(16));
       expect(c.fill, VoiceFill.full);
     });
 
     test('the meter counts the answer while it is being recorded', () async {
-      final c = controller();
-      await toQuestion(c);
+      final c = await asking();
       await c.record();
       await mic.say(seconds(3));
       expect(c.answerSeconds, closeTo(2.5, 0.3), reason: 'from the first word to the last so far');
@@ -935,9 +993,10 @@ void main() {
   });
 
   test('answer takes remember their question', () async {
-    final c = controller();
-    final shown = c.line.text;
-    await readPassage(c);
+    final first = controller();
+    final shown = first.line.text;
+    await readGood(first);
+    final c = await asking();
     final prompt = c.line.text;
     full.next = () => words('Flying, obviously.');
     await readGood(c);
@@ -950,11 +1009,12 @@ void main() {
 
   test('add more avoids the passage and question already used', () async {
     final first = controller();
-    await readPassage(first);
-    final usedPrompt = first.line.text;
-    full.next = () => words('Flying, obviously.');
     await readGood(first);
     sam = (await first.finish())!;
+    final story = await asking();
+    final usedPrompt = story.line.text;
+    full.next = () => words('Flying, obviously.');
+    await readGood(story);
     final earlier = await takes.forPerson(sam.id);
     for (var s = 0; s < 10; s++) {
       final c = ReadingController(
@@ -970,7 +1030,8 @@ void main() {
         earlier: earlier,
       );
       expect(c.lines[0].text, isNot(earlier.first.text));
-      expect(c.lines.last.text, isNot(usedPrompt));
+      final again = await asking(random: Random(s), earlier: earlier);
+      expect(again.line.text, isNot(usedPrompt));
     }
   });
 
@@ -990,8 +1051,7 @@ void main() {
   });
 
   test('answer of 7 s or more builds the reference', () async {
-    final c = controller();
-    await readPassage(c);
+    final c = await passageThenAsking();
     full.next = () => words('Honestly the traffic this morning was ridiculous');
     await c.record();
     await mic.say(longAnswer());
@@ -1001,9 +1061,8 @@ void main() {
   });
 
   test('short answer falls back to the passage', () async {
-    final c = controller();
-    final passage = c.line.text;
-    await readGood(c);
+    final c = await passageThenAsking();
+    final passage = (await takes.forPerson(sam.id)).single.text;
     full.next = () => words('Pizza.');
     await readGood(c);
     final p = await c.finish();
@@ -1011,8 +1070,7 @@ void main() {
   });
 
   test('skip on the passage still allows a voice from the answer', () async {
-    final c = controller();
-    await toQuestion(c);
+    final c = await asking();
     full.next = () => words('Honestly the traffic this morning was ridiculous');
     await c.record();
     await mic.say(longAnswer());
@@ -1021,8 +1079,7 @@ void main() {
   });
 
   test('nothing usable keeps voice not ready', () async {
-    final c = controller();
-    await toQuestion(c);
+    final c = await asking();
     await c.skip();
     expect(c.done, isTrue);
     expect(await c.finish(), isNull);
@@ -1031,10 +1088,7 @@ void main() {
   });
 
   test('open prompt take uses the transcript as text', () async {
-    final c = controller();
-    while (!c.line.openPrompt) {
-      await c.skip();
-    }
+    final c = await asking();
     full.next = () => words('Honestly the traffic this morning was ridiculous');
     await readGood(c);
     final saved = (await takes.forPerson(sam.id)).single;
@@ -1043,10 +1097,7 @@ void main() {
   });
 
   test('an open prompt with nothing heard asks again', () async {
-    final c = controller();
-    while (!c.line.openPrompt) {
-      await c.skip();
-    }
+    final c = await asking();
     full.next = () => const [];
     await readGood(c);
     expect(c.hint, 'Speak a little louder.');
@@ -1062,8 +1113,7 @@ void main() {
   });
 
   test('finish builds conversational reference and marks person ready', () async {
-    final c = controller();
-    await readPassage(c);
+    final c = await passageThenAsking();
     await readGood(c);
     expect(c.moreAnswers, isTrue, reason: 'one short answer: another question is offered');
     c.finishAnswers();

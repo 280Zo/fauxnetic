@@ -138,7 +138,7 @@ class _SpeakScreenState extends State<SpeakScreen> {
                     ? Padding(
                         padding: const EdgeInsets.fromLTRB(20, 24, 20, 12),
                         child: Text(
-                          'No lines yet. Type one below; it prepares in the background.',
+                          'Type something for ${c.person.name} to say.',
                           style: TextStyle(color: context.colors.muted),
                         ),
                       )

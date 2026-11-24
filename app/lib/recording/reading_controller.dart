@@ -47,6 +47,11 @@ const _missedWordQuiet = 2.0;
 const _mostOfLine = 0.6;
 const _openQuiet = 3.0;
 
+/// What a session records (owner, 2026-11-23): the main voice first (passage and a question),
+/// then, if wanted, a story to make it sound more like the person, then feelings (one sentence said
+/// five ways). [mood] is a single mood's own lines (storytelling, from before).
+enum SessionKind { core, story, feelings, mood }
+
 /// A take rejected as noisy while the voice cleaner is off.
 const kNoisyOfferHint = "There's a lot of background noise. Turn on Clean up background noise and try again.";
 
@@ -70,9 +75,11 @@ class ReadingController extends ChangeNotifier {
     this.cleaner,
     this.denoise,
     this.resume = false,
-  }) : _random = random ?? Random(),
+    SessionKind? kind,
+  }) : kind = kind ?? (mood == Mood.conversational ? SessionKind.core : SessionKind.mood),
+       _random = random ?? Random(),
        _earlier = earlier {
-    if (mood != Mood.conversational) return;
+    if (this.kind != SessionKind.core) return;
     if (!resume) {
       core = pickCoreSession(_random, earlier: earlier);
       return;
@@ -82,11 +89,14 @@ class ReadingController extends ChangeNotifier {
     final ls = lines;
     bool recorded(ScriptLine l) => earlier.any((t) => t.prompt == l.text && t.phrase == l.phrase?.name);
     final next = ls.indexWhere((l) => !l.openPrompt && !recorded(l));
-    index = next < 0 ? ls.length - 1 : next;
+    // Everything recorded (cut short while the voice was being made): done, so it's made now.
+    index = next < 0 ? ls.length : next;
   }
 
   /// Continuing a core session that was cut short; [_earlier] holds all of the person's takes.
   final bool resume;
+
+  final SessionKind kind;
 
   /// The person's takes from earlier sessions of this mood, so Add more and Re-record ask for new text.
   final List<Take> _earlier;
@@ -215,18 +225,32 @@ class ReadingController extends ChangeNotifier {
     await _mic.stop();
   }
 
-  /// The conversational session: one passage, then one question; null for mood packs.
+  /// The core session's passage; null for other sessions.
   CoreSession? core;
   var _prompt = 0;
 
-  /// A mood session's lines, picked once when it starts.
-  late final List<ScriptLine> _moodLines = core == null ? scriptFor(mood, _random, earlier: _earlier) : const [];
+  /// The story session ends with a question answered in the person's own words (owner, 2026-11-23:
+  /// the core session is the passage alone; own words clone closest, so refining asks for them).
+  bool get asks => kind == SessionKind.story;
 
-  /// Core: the passage, one sentence said five ways (each after its scene), then a question.
+  /// The questions for [asks], least asked first.
+  late final List<String> _prompts = asks ? pickPrompts(_random, earlier: _earlier) : const [];
+
+  /// A story, feelings or mood session's lines, picked once when it starts.
+  late final List<ScriptLine> _otherLines = switch (kind) {
+    SessionKind.core => const <ScriptLine>[],
+    SessionKind.story => storyLines(_random, earlier: _earlier),
+    SessionKind.feelings => pickPhraseSet(_random, earlier: _earlier),
+    SessionKind.mood => scriptFor(mood, _random, earlier: _earlier),
+  };
+
+  /// Core: the passage. Story: a short story, then a question. Feelings: one sentence said five
+  /// ways, each after its scene.
   List<ScriptLine> get lines {
     final c = core;
-    if (c == null) return _moodLines;
-    return [ScriptLine(c.passage), ...c.phrases, ScriptLine(c.prompts[_prompt], openPrompt: true)];
+    if (c != null) return [ScriptLine(c.passage)];
+    if (!asks) return _otherLines;
+    return [..._otherLines, ScriptLine(_prompts[_prompt], openPrompt: true)];
   }
 
   bool get canChangePassage => core != null && !recording && !checking && !building;
@@ -247,7 +271,7 @@ class ReadingController extends ChangeNotifier {
         if (t.fromScript) t.prompt ?? t.text,
     ];
     final pick = leastUsed(others, used, _random);
-    core = CoreSession(pick[_random.nextInt(pick.length)], c.prompts, c.phrases);
+    core = CoreSession(pick[_random.nextInt(pick.length)], c.prompts);
     for (final t in _sessionTakes.where((t) => t.fromScript).toList()) {
       await _takes.delete(t);
       _sessionTakes.remove(t);
@@ -263,9 +287,8 @@ class ReadingController extends ChangeNotifier {
 
   /// Shows the next question (on the question line, between takes).
   void nextPrompt() {
-    final c = core;
-    if (c == null || recording || checking || !line.openPrompt) return;
-    _prompt = (_prompt + 1) % c.prompts.length;
+    if (!asks || recording || checking || !line.openPrompt) return;
+    _prompt = (_prompt + 1) % _prompts.length;
     // An answer paused on the old question can't continue on the new one.
     _resetTake();
     paused = false;
@@ -299,7 +322,7 @@ class ReadingController extends ChangeNotifier {
   /// to worry"), and a transcript that doesn't match its audio sent Qwen into lines that never
   /// ended (2026-11-16). The passage's words are exact, so it needs no check.
   List<Take> get answersToCheck =>
-      core != null && answerSeconds >= kAnswerMinSeconds ? [..._sessionTakes.where((t) => !t.fromScript)] : const [];
+      asks && answerSeconds >= kAnswerMinSeconds ? [..._sessionTakes.where((t) => !t.fromScript)] : const [];
 
   var _wordsChecked = false;
 
@@ -649,15 +672,15 @@ class ReadingController extends ChangeNotifier {
       score: score.toDouble(),
       prompt: line.text,
       phrase: line.phrase?.name,
+      story: line.story,
     );
     _sessionTakes.add(saved);
     if (session != _session) return;
     hint = takeHint(null);
     checking = false;
-    final c = core;
-    if (open && c != null && answerSeconds < kAnswerMinSeconds) {
+    if (open && asks && answerSeconds < kAnswerMinSeconds) {
       // Not enough answers for them to beat the passage yet: ask another question (owner, 2026-11-16).
-      _prompt = (_prompt + 1) % c.prompts.length;
+      _prompt = (_prompt + 1) % _prompts.length;
       moreAnswers = true;
       spokenWords = 0;
     } else {
@@ -727,6 +750,7 @@ class ReadingController extends ChangeNotifier {
   /// [error] set, when there is not enough to build from.
   Future<Person?> finish() async {
     error = null;
+    if (kind == SessionKind.feelings) return _finishFeelings();
     final sessionIds = {for (final t in _sessionTakes) t.id};
     final all = (await _takes.forPerson(person.id)).where((t) => t.mood == mood).toList();
     final forMood = replace ? all.where((t) => sessionIds.contains(t.id)).toList() : all;
@@ -764,7 +788,6 @@ class ReadingController extends ChangeNotifier {
           await _takes.delete(t);
         }
       }
-      if (core) await _buildSentenceMoods();
       return _person;
     } on NotEnoughSpeech {
       error = core ? kNothingUsableMessage : kNotEnoughMoodSpeechMessage;
@@ -779,9 +802,30 @@ class ReadingController extends ChangeNotifier {
     }
   }
 
-  /// After the core voice: excited, annoyed and worried voices from this session's sentences. One
-  /// that can't be made is left out; the person can record that mood on its own later.
-  Future<void> _buildSentenceMoods() async {
+  /// A feelings session: the excited, annoyed and worried voices from its sentences; the main voice
+  /// stays as it is. Null, with [error] set, when none could be made.
+  Future<Person?> _finishFeelings() async {
+    building = true;
+    _changed();
+    try {
+      if (await _buildSentenceMoods() == 0) {
+        error = kNotEnoughMoodSpeechMessage;
+        return null;
+      }
+      return _person;
+    } catch (_) {
+      error = kBuildFailedMessage;
+      return null;
+    } finally {
+      building = false;
+      _changed();
+    }
+  }
+
+  /// Excited, annoyed and worried voices from the sentences said that way; returns how many were
+  /// made. One that can't be made is left out; the person can record feelings again later.
+  Future<int> _buildSentenceMoods() async {
+    var made = 0;
     for (final m in [Mood.excited, Mood.annoyed, Mood.worried]) {
       // Continuing: the sentences recorded before the session was cut short count too.
       final sentences = [
@@ -797,11 +841,13 @@ class ReadingController extends ChangeNotifier {
       }
       try {
         _person = await _people.setVoice(person.id, m, ref);
+        made++;
       } catch (_) {
         await _builder.discard(ref);
         rethrow;
       }
     }
+    return made;
   }
 
   /// A mood voice: the person's passage (or, without one, their longest answer) cut at a pause so
@@ -812,7 +858,7 @@ class ReadingController extends ChangeNotifier {
     final plain = (await _takes.forPerson(person.id))
         .where((t) => t.mood == Mood.conversational && t.phrase == null)
         .toList();
-    final passages = plain.where((t) => t.fromScript).toList();
+    final passages = plain.where((t) => t.isPassage).toList();
     final answers = plain.where((t) => !t.fromScript).toList()..sort((a, b) => b.seconds.compareTo(a.seconds));
     final base = passages.isNotEmpty ? passages.last : answers.firstOrNull;
     final ends = [for (final t in picked) (await _takes.samples(t), t.text)];

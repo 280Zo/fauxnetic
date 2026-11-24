@@ -75,15 +75,14 @@ void main() {
           onMoods: (p) async {},
           onDelete: (p) async {},
           onContinue: (p) async => events.add('continue ${p.name}'),
-          linesRecorded: (p) async => 3,
+          linesRecorded: (p) async => 0,
         ),
       ),
     );
     await t.pumpAndSettle();
-    final label = find.text('Not finished: 3 of 7 lines recorded');
+    final label = find.text('Not finished: read the passage to make the voice');
     expect(label, findsOneWidget);
     expect(t.widget<Text>(label).style?.color, FauxneticColors.light.making);
-    expect(t.widget<LinearProgressIndicator>(find.byType(LinearProgressIndicator)).value, closeTo(3 / 7, 1e-9));
     expect(find.byTooltip('Delete AJ'), findsOneWidget);
     await t.tap(find.text('AJ'));
     await t.tap(find.text('Continue'));

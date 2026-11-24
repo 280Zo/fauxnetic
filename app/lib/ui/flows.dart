@@ -5,12 +5,14 @@ import 'package:material_ui/material_ui.dart';
 import '../app_services.dart';
 import '../people/person.dart';
 import '../platform/report_email.dart';
+import '../recording/reading_controller.dart' show SessionKind;
 import '../recording/scripts.dart';
 import 'about_screen.dart';
 import 'check_words_screen.dart';
 import 'expiry_guard.dart';
 import 'from_file_screen.dart';
 import 'new_voice_screen.dart';
+import 'offer_screen.dart';
 import 'reading_screen.dart';
 import 'settings_screen.dart';
 import 'speak_screen.dart';
@@ -61,11 +63,7 @@ class Flows {
                     services: s,
                     person: p,
                     mood: Mood.conversational,
-                    onFinished: (ctx, ready) => Navigator.of(ctx).pushReplacement(
-                      MaterialPageRoute<void>(
-                        builder: (_) => _guard(ready, _VoiceReadyHost(flows: this, person: ready)),
-                      ),
-                    ),
+                    onFinished: (ctx, ready) => _offer(ctx, ready, Offer.story),
                   ),
                 ),
               ),
@@ -86,15 +84,44 @@ class Flows {
           person: p,
           mood: Mood.conversational,
           resume: true,
-          onFinished: (ctx, ready) => Navigator.of(ctx).pushReplacement(
-            MaterialPageRoute<void>(
-              builder: (_) => _guard(ready, _VoiceReadyHost(flows: this, person: ready)),
-            ),
-          ),
+          onFinished: (ctx, ready) => _offer(ctx, ready, Offer.story),
         ),
       ),
     ),
   );
+
+  /// After the main voice: offers the story; after the story: offers feelings (owner-approved flow,
+  /// 2026-11-23). "Not now", or the end of the feelings, goes to making lines.
+  void _offer(BuildContext ctx, Person p, Offer offer) {
+    final kind = offer == Offer.story ? SessionKind.story : SessionKind.feelings;
+    Navigator.of(ctx).pushReplacement(
+      MaterialPageRoute<void>(
+        builder: (offerCtx) => _guard(
+          p,
+          OfferScreen(
+            offer: offer,
+            name: p.name,
+            onNo: () => _finishWith(p),
+            onYes: () => Navigator.of(offerCtx).pushReplacement(
+              MaterialPageRoute<void>(
+                builder: (_) => _guard(
+                  p,
+                  _ReadingHost(
+                    services: s,
+                    person: p,
+                    mood: Mood.conversational,
+                    kind: kind,
+                    onFinished: (readCtx, done) =>
+                        offer == Offer.story ? _offer(readCtx, done, Offer.feelings) : _finishWith(done),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   Future<void> settings({required VoidCallback onModelsRemoved}) => _nav.push(
     MaterialPageRoute<void>(
@@ -161,11 +188,15 @@ class _ReadingHost extends StatefulWidget {
     required this.onFinished,
     this.replace = false,
     this.resume = false,
+    this.kind,
   });
   final AppServices services;
   final Person person;
   final Mood mood;
   final bool replace, resume;
+
+  /// Story or feelings; null: the main voice (conversational) or a mood's own session.
+  final SessionKind? kind;
   final void Function(BuildContext context, Person p) onFinished;
 
   @override
@@ -180,17 +211,17 @@ class _ReadingHostState extends State<_ReadingHost> {
   void initState() {
     super.initState();
     unawaited(
-      widget.services.readingSession(widget.person, widget.mood, replace: widget.replace, resume: widget.resume).then((
-        s,
-      ) async {
-        if (_disposed) {
-          // Left during the spinner: same as leaving the reading screen (an unfinished new
-          // person is removed).
-          await s.controller.abandon();
-          return s.close();
-        }
-        setState(() => _session = s);
-      }),
+      widget.services
+          .readingSession(widget.person, widget.mood, replace: widget.replace, resume: widget.resume, kind: widget.kind)
+          .then((s) async {
+            if (_disposed) {
+              // Left during the spinner: same as leaving the reading screen (an unfinished new
+              // person is removed).
+              await s.controller.abandon();
+              return s.close();
+            }
+            setState(() => _session = s);
+          }),
     );
   }
 
@@ -228,8 +259,20 @@ class _VoiceReadyHost extends StatefulWidget {
 
 class _VoiceReadyHostState extends State<_VoiceReadyHost> {
   late Person _person = widget.person;
+  var _storyDone = false;
 
-  Future<void> _record(Mood m, {bool replace = false}) async {
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_refresh());
+  }
+
+  Future<void> _refresh() async {
+    final done = await widget.flows.s.storyRecorded(_person);
+    if (mounted) setState(() => _storyDone = done);
+  }
+
+  Future<void> _record(SessionKind kind, {bool replace = false}) async {
     final updated = await Navigator.of(context).push<Person>(
       MaterialPageRoute(
         builder: (_) => widget.flows._guard(
@@ -237,7 +280,8 @@ class _VoiceReadyHostState extends State<_VoiceReadyHost> {
           _ReadingHost(
             services: widget.flows.s,
             person: _person,
-            mood: m,
+            mood: Mood.conversational,
+            kind: kind,
             replace: replace,
             onFinished: (ctx, p) => Navigator.of(ctx).pop(p),
           ),
@@ -245,13 +289,16 @@ class _VoiceReadyHostState extends State<_VoiceReadyHost> {
       ),
     );
     if (updated != null && mounted) setState(() => _person = updated);
+    await _refresh();
   }
 
   @override
   Widget build(BuildContext context) => VoiceReadyScreen(
     person: _person,
-    onAddMore: _record,
-    onReRecord: (m) => _record(m, replace: true),
+    storyDone: _storyDone,
+    onMainAgain: () => _record(SessionKind.core, replace: true),
+    onStory: () => _record(SessionKind.story),
+    onFeelings: () => _record(SessionKind.feelings),
     onStartTyping: () => widget.flows._finishWith(_person),
   );
 }

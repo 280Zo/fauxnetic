@@ -82,11 +82,18 @@ void main() {
   });
 
   testWidgets('ready screen is readable in dark', (t) async {
-    await pumpDark(t, VoiceReadyScreen(person: sam, onAddMore: (_) {}, onReRecord: (_) {}, onStartTyping: () {}));
-    expect(colorOf(t, "Sam's voice is ready"), isNot(lightInk));
-    expect(
-      colorOf(t, 'Conversational voice recorded. Add moods if you want more range; each takes under a minute.'),
-      FauxneticColors.dark.muted,
+    await pumpDark(
+      t,
+      VoiceReadyScreen(
+        person: sam,
+        storyDone: false,
+        onMainAgain: () {},
+        onStory: () {},
+        onFeelings: () {},
+        onStartTyping: () {},
+      ),
     );
+    expect(colorOf(t, "Sam's voice"), isNot(lightInk));
+    expect(colorOf(t, 'Main voice'), isNot(lightInk));
   });
 }

@@ -174,21 +174,10 @@ class _PeopleScreenState extends State<PeopleScreen> {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(
-                                      'Not finished: $done of $kCoreLines lines recorded',
+                                      done >= kCoreLines
+                                          ? 'Not finished: the voice still has to be made'
+                                          : 'Not finished: read the passage to make the voice',
                                       style: TextStyle(color: context.colors.making, fontWeight: FontWeight.w700),
-                                    ),
-                                    const SizedBox(height: 8),
-                                    SizedBox(
-                                      width: 160,
-                                      child: ClipRRect(
-                                        borderRadius: BorderRadius.circular(4),
-                                        child: LinearProgressIndicator(
-                                          value: done / kCoreLines,
-                                          minHeight: 4,
-                                          color: context.colors.making,
-                                          backgroundColor: context.colors.rule,
-                                        ),
-                                      ),
                                     ),
                                   ],
                                 )

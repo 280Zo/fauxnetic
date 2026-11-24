@@ -44,6 +44,8 @@ class _ReadingScreenState extends State<ReadingScreen> {
     _lifecycle = AppLifecycleListener(onHide: () => unawaited(c.onInterrupted()), onShow: () => unawaited(c.listen()));
     c.addListener(_maybeFinish);
     unawaited(c.listen());
+    // A continued session with everything recorded opens done: the voice is made straight away.
+    WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_maybeFinish()));
   }
 
   @override
@@ -89,7 +91,8 @@ class _ReadingScreenState extends State<ReadingScreen> {
     // One sentence said several ways: the scene sets up how to say it.
     final scene = c.line.scene;
     if (scene != null) return '$scene:';
-    if (c.mood == Mood.conversational) return "say it like you'd say it to a friend";
+    if (c.line.story) return "read it like you're telling a friend";
+    if (c.mood == Mood.conversational) return "read it like you're leaving a message";
     return '${c.mood.label} · say it like you mean it';
   }
 
@@ -218,7 +221,7 @@ class _ReadingScreenState extends State<ReadingScreen> {
         Expanded(
           child: _ScriptText(said: said.isEmpty ? '' : (rest.isEmpty ? said : '$said '), rest: rest, style: big),
         ),
-        if (c.core != null && c.line.openPrompt) _VoiceMeter(seconds: c.answerSeconds, fill: c.fill),
+        if (c.asks && c.line.openPrompt) _VoiceMeter(seconds: c.answerSeconds, fill: c.fill),
         if (next != null)
           Padding(
             padding: const EdgeInsets.only(bottom: 16),
@@ -335,7 +338,8 @@ class _ReadingScreenState extends State<ReadingScreen> {
             ),
           ],
         ),
-        if (c.core != null) ...[
+        // The passage can be swapped; the question at the end of the story can be another one.
+        if (c.core != null || (c.asks && c.line.openPrompt)) ...[
           const SizedBox(height: 20),
           Row(
             children: [

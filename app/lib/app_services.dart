@@ -414,20 +414,24 @@ class AppServices {
 
   /// tiny.en follows along while reading; base.en checks each finished take.
   /// Earlier takes of [mood] are passed in so Add more and Re-record ask for text not used yet.
-  /// How many of the core session's lines [p] has recorded: the passage, each way of saying the
-  /// sentence, and the question (any answer).
-  Future<int> coreLinesRecorded(Person p) async {
-    final all = await takes.forPerson(p.id);
-    final passage = all.any((t) => t.fromScript && t.phrase == null && t.mood == Mood.conversational);
-    final ways = {for (final t in all) ?t.phrase};
-    final answered = all.any((t) => !t.fromScript);
-    return (passage ? 1 : 0) + ways.length + (answered ? 1 : 0);
-  }
+  /// How many of the core session's lines [p] has recorded (the passage).
+  Future<int> coreLinesRecorded(Person p) async => (await takes.forPerson(p.id)).any((t) => t.isPassage) ? 1 : 0;
 
-  /// [resume]: continuing a core session that was cut short, so all of the person's takes are passed.
-  Future<ReadingSession> readingSession(Person p, Mood mood, {bool replace = false, bool resume = false}) async {
+  /// Whether a story was read for [p] (it makes the main voice sound more like them).
+  Future<bool> storyRecorded(Person p) async => (await takes.forPerson(p.id)).any((t) => t.story);
+
+  /// [resume]: continuing a core session that was cut short. [kind]: a story or feelings session.
+  /// Both see all of the person's takes (to resume, or to pick a story or sentence not used yet).
+  Future<ReadingSession> readingSession(
+    Person p,
+    Mood mood, {
+    bool replace = false,
+    bool resume = false,
+    SessionKind? kind,
+  }) async {
     final all = await takes.forPerson(p.id);
-    final earlier = resume ? all : all.where((t) => t.mood == mood).toList();
+    final wide = resume || kind == SessionKind.story || kind == SessionKind.feelings;
+    final earlier = wide ? all : all.where((t) => t.mood == mood).toList();
     final follow = WhisperTranscriber(models, ModelRole.asrTiny);
     final full = WhisperTranscriber(models, ModelRole.asrBase);
     final c = ReadingController(
@@ -442,6 +446,7 @@ class AppServices {
       replace: replace,
       earlier: earlier,
       resume: resume,
+      kind: kind,
       cleaner: rnnoiseCleaner,
       denoise: rnnoiseDenoise,
     );

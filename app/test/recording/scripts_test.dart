@@ -11,23 +11,39 @@ void main() {
     expect(kPassages.where((p) => p.contains('Stella')), isEmpty);
   });
 
-  test('passages are the tested three', () {
-    expect(kPassages.length, 3);
-    expect(kPassages[0], startsWith("Hey, it's me. Could you grab the big yellow jug of oat milk"));
-    expect(
-      kPassages[1],
-      'Please ring Martin. Tell him to pick up these things on his way from the market: three crisp green apples, '
-      'two jars of fresh strawberry jam, and a large sack of brown rice for his sister Grace. We\'ll also need a '
-      'thick wool scarf, a cheap toy drum, and some splashy paint for the boys. He can usually pack it all into six '
-      'blue boxes and meet us Thursday at the bus stop.',
-    );
-    expect(
-      kPassages[2],
-      'Ask Judy to call the shop before noon. She needs to order these items for the party on Saturday: four bags of '
-      'frozen shrimp, a dozen thin slices of smoked ham, and a big jug of orange juice for her nephew Paul. We should '
-      "also bring a small blue tablecloth and a pair of plastic toy swords for the children. She'll measure "
-      'everything twice, then drive it around to the old church at three.',
-    );
+  // Owner, 2026-11-23: the old lists read like tongue twisters; a big set of natural messages and
+  // small stories instead, picked at random.
+  test('a big set of passages, each different', () {
+    expect(kPassages.length, greaterThanOrEqualTo(15));
+    expect(kPassages.toSet(), hasLength(kPassages.length));
+    expect(kPassages.where((p) => p.contains('Please ring Martin') || p.contains('Ask Judy')), isEmpty);
+  });
+
+  test('every passage has the sounds that are easiest to miss', () {
+    // Spelling stand-ins for the sounds (no pronunciation dictionary on the phone or here).
+    final sounds = {
+      'th as in think': RegExp(
+        r"\b(think|thing|things|thank|thanks|three|thought|both|thursday|fourth|thrilled|birthday|thin|nothing|something|everything|theater|month|north|south|thousand|throw|threw|healthy|thick)\b",
+      ),
+      'th as in this': RegExp(
+        r'\b(the|this|that|they|there|then|with|other|together|weather|either|than|those|these|them)\b',
+      ),
+      'sh': RegExp(r'sh|tion|\bsure'),
+      'ch': RegExp(r'ch|tch'),
+      'j': RegExp(r'j|dge|g[ei]'),
+      'zh as in usually': RegExp(r'usually|measure|pleasure|treasure|garage|vision|casual|beige|television'),
+      'ng': RegExp(r'ng'),
+      'oy': RegExp(r'oy|oi'),
+      'ow': RegExp(r'ou|ow'),
+      'v': RegExp(r'v'),
+      'y as in yes': RegExp(r"\b(you|your|you're|you'll|yes|yeah|year|years|yellow|yet|young|yesterday)\b"),
+    };
+    for (final p in kPassages) {
+      final text = p.toLowerCase();
+      for (final MapEntry(key: name, value: re) in sounds.entries) {
+        expect(re.hasMatch(text), isTrue, reason: '$name missing: ${p.substring(0, 40)}');
+      }
+    }
   });
 
   test('passages are 45 to 75 words', () {
@@ -66,8 +82,10 @@ void main() {
     expect(a.passage, b.passage);
     expect(a.prompts, b.prompts);
     expect(a.prompts.toSet(), kPrompts.toSet());
-    final seen = {for (var s = 0; s < 200; s++) pickCoreSession(Random(s)).passage};
+    final seen = {for (var s = 0; s < 600; s++) pickCoreSession(Random(s)).passage};
     expect(seen, kPassages.toSet(), reason: 'every passage can come up');
+    final firsts = {for (var s = 0; s < 40; s++) pickCoreSession(Random(s)).passage};
+    expect(firsts.length, greaterThan(8), reason: 'a new voice does not start with the same one each time');
   });
 
   Take passageTake(String text) => Take(
@@ -102,17 +120,14 @@ void main() {
       expect(used, isNot(contains(c.prompts.first)));
       expect(c.prompts.skip(kPrompts.length - 3).toSet(), used.toSet(), reason: 'used questions come last');
     }
-    final firsts = {for (var s = 0; s < 50; s++) pickCoreSession(Random(s), earlier: earlier).passage};
-    expect(firsts, {kPassages[1], kPassages[2]}, reason: 'still random among the unused');
+    final firsts = {for (var s = 0; s < 300; s++) pickCoreSession(Random(s), earlier: earlier).passage};
+    expect(firsts, kPassages.skip(1).toSet(), reason: 'still random among the unused');
   });
 
   test('when all passages are used the least used comes back', () {
     final earlier = [
       passageTake(kPassages[0]),
-      passageTake(kPassages[1]),
-      passageTake(kPassages[1]),
-      passageTake(kPassages[2]),
-      passageTake(kPassages[2]),
+      for (final p in kPassages.skip(1)) ...[passageTake(p), passageTake(p)],
     ];
     for (var s = 0; s < 20; s++) {
       expect(pickCoreSession(Random(s), earlier: earlier).passage, kPassages[0]);
@@ -165,35 +180,62 @@ void main() {
     phrase: l.phrase!.name,
   );
 
-  test('a core session brings one sentence set, the one used least', () {
-    final c = pickCoreSession(Random(1));
-    expect(kPhraseSets, contains(c.phrases));
+  test('a feelings session brings one sentence set, the one used least', () {
+    expect(kPhraseSets, contains(pickPhraseSet(Random(1))));
     final earlier = [for (final l in kPhraseSets[0]) phraseTake(l), for (final l in kPhraseSets[1]) phraseTake(l)];
     for (var s = 0; s < 30; s++) {
-      final next = pickCoreSession(Random(s), earlier: earlier).phrases;
-      expect([kPhraseSets[2], kPhraseSets[3]], contains(next));
+      expect([kPhraseSets[2], kPhraseSets[3]], contains(pickPhraseSet(Random(s), earlier: earlier)));
     }
   });
 
-  test('resuming keeps the passage and sentence set already started', () {
-    final earlier = [passageTake(kPassages[2]), phraseTake(kPhraseSets[1][0]), phraseTake(kPhraseSets[1][1])];
+  test('resuming keeps the passage already read', () {
     for (var s = 0; s < 10; s++) {
-      final c = resumeCoreSession(Random(s), earlier: earlier);
-      expect(c.passage, kPassages[2]);
-      expect(c.phrases, kPhraseSets[1]);
+      expect(resumeCoreSession(Random(s), earlier: [passageTake(kPassages[2])]).passage, kPassages[2]);
     }
-    expect(kCoreLines, 7);
+    expect(kCoreLines, 1, reason: 'the passage alone (owner, 2026-11-23)');
   });
 
-  test('resuming with only a sentence started still finds its set, and picks a passage', () {
-    final c = resumeCoreSession(Random(1), earlier: [phraseTake(kPhraseSets[3][2])]);
-    expect(c.phrases, kPhraseSets[3]);
-    expect(kPassages, contains(c.passage));
+  Take storyTake(String line) => Take(
+    id: line.hashCode.toString(),
+    personId: 'p',
+    mood: Mood.conversational,
+    text: line,
+    fromScript: true,
+    seconds: 5,
+    score: 1,
+    file: 'f',
+    prompt: line,
+    story: true,
+  );
+
+  test('stories: four, five lines each, about a minute aloud', () {
+    expect(kStories, hasLength(4));
+    for (final s in kStories) {
+      expect(s, hasLength(5));
+      final n = s.fold<int>(0, (a, l) => a + words(l));
+      expect(n, inInclusiveRange(90, 160), reason: s.first);
+    }
+  });
+
+  test('a story session reads the story read least', () {
+    final earlier = [for (final l in kStories[0]) storyTake(l), for (final l in kStories[2]) storyTake(l)];
+    for (var s = 0; s < 30; s++) {
+      final lines = storyLines(Random(s), earlier: earlier);
+      expect([kStories[1].first, kStories[3].first], contains(lines.first.text));
+      expect(lines, hasLength(5));
+      expect(lines.every((l) => l.story && !l.openPrompt && l.phrase == null), isTrue);
+    }
+  });
+
+  test('story takes do not count as the passage read', () {
+    final earlier = [for (final s in kStories) ...s.map(storyTake)];
+    final seen = {for (var s = 0; s < 600; s++) pickCoreSession(Random(s), earlier: earlier).passage};
+    expect(seen, kPassages.toSet());
   });
 
   test('sentence takes do not count as the passage read', () {
     final earlier = [for (final set in kPhraseSets) ...set.map(phraseTake)];
-    final seen = {for (var s = 0; s < 100; s++) pickCoreSession(Random(s), earlier: earlier).passage};
+    final seen = {for (var s = 0; s < 600; s++) pickCoreSession(Random(s), earlier: earlier).passage};
     expect(seen, kPassages.toSet());
   });
 
