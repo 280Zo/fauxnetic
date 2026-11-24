@@ -103,7 +103,8 @@ class _ReadingScreenState extends State<ReadingScreen> {
         ),
         body: SafeArea(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
+            // The bottom section sits well clear of the screen's edge (owner, 2026-11-23: cramped).
+            padding: const EdgeInsets.fromLTRB(24, 8, 24, 40),
             child: c.done ? _buildDone(context) : _buildLine(context),
           ),
         ),
@@ -227,7 +228,7 @@ class _ReadingScreenState extends State<ReadingScreen> {
           height: 36,
           child: _LevelMeter(bars: c.levelBars, live: c.recording),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 12),
         if (c.checking)
           Text('Checking…', style: TextStyle(color: context.colors.muted))
         else if (c.paused && !c.recording && c.error == null)
@@ -273,7 +274,8 @@ class _ReadingScreenState extends State<ReadingScreen> {
             child: TextButton(onPressed: widget.openSettings, child: const Text('Open settings')),
           ),
         ],
-        if (c.canClean)
+        if (c.canClean) ...[
+          const SizedBox(height: 12),
           Row(
             children: [
               // One line only: with a second, the longest passage no longer fit an A54 screen.
@@ -289,7 +291,8 @@ class _ReadingScreenState extends State<ReadingScreen> {
               Switch(value: c.cleanNoise, onChanged: c.recording || c.checking ? null : (on) => c.cleanNoise = on),
             ],
           ),
-        const SizedBox(height: 12),
+        ],
+        const SizedBox(height: 24),
         Row(
           children: [
             Expanded(
@@ -333,7 +336,7 @@ class _ReadingScreenState extends State<ReadingScreen> {
           ],
         ),
         if (c.core != null) ...[
-          const SizedBox(height: 10),
+          const SizedBox(height: 20),
           Row(
             children: [
               Expanded(

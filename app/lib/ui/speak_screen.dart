@@ -57,7 +57,7 @@ class _SpeakScreenState extends State<SpeakScreen> {
     super.dispose();
   }
 
-  /// The dock when nothing is selected: the text box, then moods, model and Generate.
+  /// The dock when nothing is selected: the text box, then the moods, then model and Generate.
   Widget _compose(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
@@ -84,6 +84,7 @@ class _SpeakScreenState extends State<SpeakScreen> {
           ),
         ),
       ),
+      if (c.moods.isNotEmpty) ...[const SizedBox(height: 8), _Moods(controller: c)],
       const SizedBox(height: 6),
       _Tools(
         controller: c,
@@ -160,53 +161,63 @@ class _SpeakScreenState extends State<SpeakScreen> {
   }
 }
 
-/// The row above the text box: small mood buttons (recorded moods only) and the model picker.
+/// The moods recorded for this voice, on one row of their own under the text box. Owner,
+/// 2026-11-23: beside the model picker they wrapped onto several rows, and the bold label of the
+/// picked one re-wrapped them and squashed the text box. Here the picked one changes only color,
+/// never size, and a row too narrow for them scrolls sideways instead of wrapping.
+class _Moods extends StatelessWidget {
+  const _Moods({required this.controller});
+  final SpeakController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = controller;
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          for (final m in c.moods) ...[
+            if (m != c.moods.first) const SizedBox(width: 6),
+            ChoiceChip(
+              label: Text(
+                m.label,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: c.mood == m ? context.colors.paper : context.colors.ink,
+                ),
+              ),
+              selected: c.mood == m,
+              showCheckmark: false,
+              visualDensity: VisualDensity.compact,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              labelPadding: const EdgeInsets.symmetric(horizontal: 6),
+              selectedColor: context.colors.clone,
+              shape: StadiumBorder(side: BorderSide(color: context.colors.rule)),
+              onSelected: (_) => c.setMood(m),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// The row under the moods: the model picker and [trailing] (Generate).
 class _Tools extends StatelessWidget {
   const _Tools({required this.controller, required this.trailing});
   final SpeakController controller;
   final Widget trailing;
 
   @override
-  Widget build(BuildContext context) {
-    final c = controller;
-    return Padding(
-      padding: EdgeInsets.zero,
-      child: Row(
-        children: [
-          Expanded(
-            child: Wrap(
-              spacing: 4,
-              runSpacing: 4,
-              children: [
-                for (final m in c.moods)
-                  ChoiceChip(
-                    label: Text(
-                      m.label,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: c.mood == m ? FontWeight.w700 : FontWeight.w400,
-                        color: c.mood == m ? context.colors.paper : context.colors.ink,
-                      ),
-                    ),
-                    selected: c.mood == m,
-                    showCheckmark: false,
-                    visualDensity: VisualDensity.compact,
-                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    labelPadding: const EdgeInsets.symmetric(horizontal: 4),
-                    selectedColor: context.colors.clone,
-                    shape: StadiumBorder(side: BorderSide(color: context.colors.rule)),
-                    onSelected: (_) => c.setMood(m),
-                  ),
-              ],
-            ),
-          ),
-          _ModelPicker(controller: c),
-          const SizedBox(width: 8),
-          trailing,
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) => Row(
+    children: [
+      const Spacer(),
+      _ModelPicker(controller: controller),
+      const SizedBox(width: 8),
+      trailing,
+    ],
+  );
 }
 
 /// "Model Qwen3-TTS ▾". Picking a model that isn't downloaded shows its size and licence note
@@ -458,7 +469,8 @@ class _Dock extends StatelessWidget {
   final SpeakController controller;
   final Widget compose;
 
-  static const height = 176.0;
+  /// Room for the text box, the moods row, and the model picker with Generate.
+  static const height = 208.0;
 
   @override
   Widget build(BuildContext context) {

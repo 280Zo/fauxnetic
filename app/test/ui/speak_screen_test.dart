@@ -847,7 +847,7 @@ void main() {
     expect(find.text('Generate'), findsOneWidget);
   });
 
-  testWidgets('mood buttons sit by the model picker, only for recorded moods', (t) async {
+  testWidgets('mood buttons have their own row under the text box, only for recorded moods', (t) async {
     final c = await pump(t);
     expect(find.widgetWithText(ChoiceChip, 'Conversational'), findsOneWidget);
     expect(find.widgetWithText(ChoiceChip, 'Excited'), findsOneWidget);
@@ -856,13 +856,62 @@ void main() {
     }
     expect(t.widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'Conversational')).selected, isTrue);
     final chipY = t.getCenter(find.widgetWithText(ChoiceChip, 'Excited')).dy;
-    expect((chipY - t.getCenter(find.text('Model')).dy).abs(), lessThan(24), reason: 'same row as the picker');
-    expect(chipY, greaterThan(t.getCenter(find.byType(TextField)).dy - 80), reason: 'just above the text box');
+    expect(chipY, greaterThan(t.getRect(find.byType(TextField)).bottom), reason: 'under the text box');
+    expect(chipY, lessThan(t.getRect(find.text('Model')).top), reason: 'above the model picker');
     await t.tap(find.text('Excited'));
     await t.pump();
     expect(c.mood, Mood.excited);
     expect(find.textContaining('not recorded'), findsNothing);
   });
+
+  // Owner, 2026-11-23: since the core session records Excited, Annoyed and Worried too, picking a
+  // mood moved things around until the screen was unusable.
+  const allMoods = Person(
+    id: 'p3',
+    name: 'Sam',
+    source: PersonSource.recorded,
+    voices: {Mood.conversational: ref, Mood.excited: ref, Mood.annoyed: ref, Mood.worried: ref},
+  );
+
+  Future<FakeSpeakController> pumpMoods(WidgetTester t, Size size) async {
+    // The app's font: the test font's square letters are far wider, so widths would mean nothing.
+    final loader = FontLoader(kFontFamily)
+      ..addFont(rootBundle.load('assets/fonts/AtkinsonHyperlegibleNext-Regular.ttf'))
+      ..addFont(rootBundle.load('assets/fonts/AtkinsonHyperlegibleNext-Bold.ttf'));
+    await t.runAsync(loader.load);
+    t.view.physicalSize = size;
+    t.view.devicePixelRatio = 1;
+    addTearDown(t.view.reset);
+    final c = FakeSpeakController(allMoods);
+    await t.pumpWidget(
+      MaterialApp(
+        theme: buildTheme(Brightness.dark),
+        home: SpeakScreen(controller: c),
+      ),
+    );
+    return c;
+  }
+
+  for (final (name, size) in [('A54', const Size(411, 891)), ('Pixel 9 Pro XL', const Size(448, 997))]) {
+    testWidgets('on a $name, picking a mood moves nothing', (t) async {
+      final c = await pumpMoods(t, size);
+      Map<String, Rect> where() => {
+        for (final m in c.moods) m.label: t.getRect(find.widgetWithText(ChoiceChip, m.label)),
+        'text': t.getRect(find.byType(TextField)),
+        'generate': t.getRect(find.text('Generate')),
+        'dock': t.getRect(find.byKey(const Key('dock'))),
+      };
+      final before = where();
+      final rows = {for (final m in c.moods) before[m.label]!.center.dy.round()};
+      expect(rows, hasLength(1), reason: 'the moods stay on one row');
+      for (final m in c.moods) {
+        await t.tap(find.widgetWithText(ChoiceChip, m.label));
+        await t.pumpAndSettle();
+        expect(c.mood, m);
+        expect(where(), before, reason: 'after picking ${m.label}');
+      }
+    });
+  }
 
   testWidgets('no mood buttons when only conversational is recorded', (t) async {
     final c = FakeSpeakController(
