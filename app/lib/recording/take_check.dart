@@ -6,7 +6,11 @@ enum TakeProblem { tooQuiet, clipping, noisy, missedWords }
 const _frame = 320; // 20 ms at 16 kHz
 const _silentDb = -120.0;
 const _quietDb = -40.0;
-const _noisyDb = -45.0;
+
+/// A take is noisy when the voice stands out from the room by less than this. Owner's home
+/// takes: 27-42 dB. A fixed limit for the room (-45 dBFS) rejected clear speech over an office
+/// HVAC hum (2026-11-23); what matters for a voice clip is how far the voice is above it.
+const _minGapDb = 20.0;
 const _clipLevel = 0.99;
 const _clipShare = 0.005;
 const _maxWer = 0.35;
@@ -36,8 +40,9 @@ TakeProblem? checkTake(Float32List pcm16k, {String? script, String? heard}) {
   final levels = <double>[
     for (var i = 0; i < pcm16k.length; i += _frame) _db(_rms(pcm16k, i, min(i + _frame, pcm16k.length))),
   ]..sort();
-  if (_percentile(levels, 0.95) < _quietDb) return TakeProblem.tooQuiet;
-  if (_percentile(levels, 0.10) > _noisyDb) return TakeProblem.noisy;
+  final speech = _percentile(levels, 0.95), room = _percentile(levels, 0.10);
+  if (speech < _quietDb) return TakeProblem.tooQuiet;
+  if (speech - room < _minGapDb) return TakeProblem.noisy;
   if (script != null && heard != null && wordErrorRate(script, heard) > _maxWer) return TakeProblem.missedWords;
   return null;
 }

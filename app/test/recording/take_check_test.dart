@@ -17,8 +17,16 @@ void main() {
     expect(checkTake(Float32List.fromList(clipped)), TakeProblem.clipping);
   });
 
-  test('noise floor between words is noisy', () {
-    expect(checkTake(bursts(-20, -40)), TakeProblem.noisy);
+  test('a background close to the voice is noisy', () {
+    expect(checkTake(bursts(-25, -40)), TakeProblem.noisy);
+    expect(checkTake(bursts(-30, -42)), TakeProblem.noisy);
+  });
+
+  test('a steady hum under clear, close speech is fine', () {
+    // Owner, 2026-11-23: an office HVAC rejected four takes spoken straight into the phone. The
+    // check used a fixed limit for the room (-45 dBFS), not how far the voice stands out.
+    expect(checkTake(bursts(-20, -42)), isNull);
+    expect(checkTake(bursts(-15, -38)), isNull);
   });
 
   test('missed words', () {
