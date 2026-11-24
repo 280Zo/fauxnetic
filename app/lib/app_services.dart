@@ -430,6 +430,7 @@ class AppServices {
       replace: replace,
       earlier: earlier,
       cleaner: rnnoiseCleaner,
+      denoise: rnnoiseDenoise,
     );
     return ReadingSession(c, [follow, full]);
   }

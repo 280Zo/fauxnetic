@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -68,6 +69,13 @@ void main() {
     return c;
   }
 
+  /// Past the passage and the five sentences.
+  Future<void> toQuestion(ReadingController c) async {
+    while (!c.line.openPrompt) {
+      await c.skip();
+    }
+  }
+
   ScrollPosition scriptScroll(WidgetTester t) => t
       .state<ScrollableState>(
         find.ancestor(of: find.byKey(const Key('script-line')), matching: find.byType(Scrollable)),
@@ -104,6 +112,22 @@ void main() {
     }
   });
 
+  testWidgets('an off switch looks switchable, not disabled', (t) async {
+    // Owner, 2026-11-23: it looked like it couldn't be switched (its outline was the faint rule grey).
+    for (final b in Brightness.values) {
+      final theme = buildTheme(b).switchTheme;
+      final colors = b == Brightness.dark ? FauxneticColors.dark : FauxneticColors.light;
+      expect(theme.trackOutlineColor!.resolve({}), colors.muted, reason: b.name);
+      expect(theme.thumbColor!.resolve({}), colors.muted, reason: b.name);
+      expect(theme.trackColor!.resolve({WidgetState.selected}), colors.ink, reason: b.name);
+      expect(
+        theme.trackOutlineColor!.resolve({WidgetState.disabled}),
+        isNot(colors.muted),
+        reason: 'disabled still looks it',
+      );
+    }
+  });
+
   testWidgets('the noise cleaner switch starts off and turns on', (t) async {
     final c = await pump(t, cleaner: true);
     expect(t.widget<Switch>(find.byType(Switch)).value, isFalse);
@@ -111,6 +135,18 @@ void main() {
     await t.pump();
     expect(c.cleanNoise, isTrue);
     expect(t.widget<Switch>(find.byType(Switch)).value, isTrue);
+  });
+
+  testWidgets('the room meter listens as the screen opens and shows the room by the switch', (t) async {
+    await pump(t, cleaner: true);
+    await t.runAsync(settle);
+    expect(mic.live, isTrue, reason: 'listening before Record');
+    await t.runAsync(() => mic.say(Float32List.fromList(noise(1, -62, Random(1)))));
+    await t.pump();
+    expect(find.text('Room: quiet'), findsOneWidget);
+    await t.runAsync(() => mic.say(Float32List.fromList(noise(3, -35, Random(2)))));
+    await t.pump();
+    expect(find.text('Room: noisy'), findsOneWidget);
   });
 
   testWidgets('no cleaner, no switch', (t) async {
@@ -127,6 +163,15 @@ void main() {
     });
     await t.pump();
     expect(find.text(kNoisyOfferHint), findsOneWidget);
+    // Owner, 2026-11-23: the message must stand out, not sit in small grey text.
+    final box = t.widget<Container>(find.byKey(const Key('noisy-offer')));
+    final colors = FauxneticColors.light;
+    expect((box.decoration! as BoxDecoration).color, colors.uncertainFill);
+    expect(
+      find.descendant(of: find.byKey(const Key('noisy-offer')), matching: find.byIcon(Icons.warning_amber_rounded)),
+      findsOneWidget,
+    );
+    expect(find.widgetWithText(FilledButton, 'Turn on'), findsOneWidget);
     await t.tap(find.text('Turn on'));
     await t.pump();
     expect(c.cleanNoise, isTrue);
@@ -151,7 +196,7 @@ void main() {
 
   testWidgets('core line shows the exact copy', (t) async {
     final c = await pump(t);
-    expect(find.text('Line 1 of 2'), findsOneWidget);
+    expect(find.text('Line 1 of 7'), findsOneWidget);
     expect(find.text("say it like you'd say it to a friend"), findsOneWidget);
     expect(find.text('Next: ${c.lines[1].text}'), findsOneWidget);
     for (final label in ['Redo', 'Record', 'Skip']) {
@@ -253,7 +298,7 @@ void main() {
 
   testWidgets('question shows another question', (t) async {
     final c = await pump(t);
-    await t.runAsync(c.skip);
+    await t.runAsync(() => toQuestion(c));
     await t.pump();
     final first = c.line.text;
     await t.tap(find.text('Another question'));
@@ -265,7 +310,7 @@ void main() {
   testWidgets('the meter shows under questions, not under the passage', (t) async {
     final c = await pump(t);
     expect(find.byKey(const Key('voiceMeter')), findsNothing, reason: 'reading the passage');
-    await t.runAsync(c.skip);
+    await t.runAsync(() => toQuestion(c));
     await t.pump();
     expect(find.byKey(const Key('voiceMeter')), findsOneWidget);
     expect(find.text('Basic'), findsOneWidget);
@@ -275,7 +320,7 @@ void main() {
 
   testWidgets('a short answer offers one more question and Finish', (t) async {
     final c = await pump(t);
-    await t.runAsync(c.skip);
+    await t.runAsync(() => toQuestion(c));
     full.next = () => words('Flying, obviously, every single day.');
     await t.runAsync(() async {
       await c.record();
@@ -300,7 +345,7 @@ void main() {
         home: ReadingScreen(controller: c, onFinished: (p) => built = p, openSettings: () async {}),
       ),
     );
-    await t.runAsync(c.skip);
+    await t.runAsync(() => toQuestion(c));
     full.next = () => words('I have to worry about falling and flying everywhere today.');
     await t.runAsync(() async {
       await c.record();
@@ -337,10 +382,24 @@ void main() {
     expect(meterCopy(VoiceFill.full), ('Full', "Full — that's all a voice can use"));
   });
 
-  testWidgets('a mood session names the mood', (t) async {
-    await pump(t, mood: Mood.excited);
+  testWidgets('a sentence line shows its scene', (t) async {
+    final c = await pump(t);
+    await t.runAsync(c.skip);
+    await t.pump();
+    expect(find.text('Line 2 of 7'), findsOneWidget);
+    expect(find.text('${c.line.scene}:'), findsOneWidget);
+    expect(t.widget<RichText>(find.byKey(const Key('script-line'))).text.toPlainText(), c.line.text);
+  });
+
+  testWidgets('an excited session shows each sentence with its scene', (t) async {
+    final c = await pump(t, mood: Mood.excited);
     expect(find.text('Line 1 of 3'), findsOneWidget);
-    expect(find.text('Excited · say it like you mean it'), findsOneWidget);
+    expect(find.text('${c.line.scene}:'), findsOneWidget);
+  });
+
+  testWidgets('storytelling still names the mood', (t) async {
+    await pump(t, mood: Mood.storytelling);
+    expect(find.text('Storytelling · say it like you mean it'), findsOneWidget);
   });
 
   testWidgets('new voice screen copy and start', (t) async {

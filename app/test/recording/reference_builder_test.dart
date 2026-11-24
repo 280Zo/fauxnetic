@@ -57,6 +57,18 @@ void main() {
     expect(ref.seconds, closeTo(2 * (4 + 0.6) + 0.3, 0.05), reason: 'each take keeps 0.3 s of quiet a side');
   });
 
+  test('pieces join in the order given, with their words and 0.3 s gaps', () async {
+    final ref = await builder.buildJoined([(tone(10), 'The passage part.'), (tone(2), 'She sold the old car!')]);
+    expect(ref.refText, 'The passage part. She sold the old car!');
+    expect(ref.seconds, closeTo(12 + 0.3, 1e-3));
+    final wav = await vault.decryptFile(File('${dir.path}/${ref.clipFile}'));
+    expect(wavSeconds(wav), closeTo(ref.seconds, 1e-3));
+  });
+
+  test('joined pieces under 3 s throw NotEnoughSpeech', () async {
+    await expectLater(builder.buildJoined([(tone(1), 'Hi.'), (tone(1), 'There.')]), throwsA(isA<NotEnoughSpeech>()));
+  });
+
   test('transcript joins take texts in order', () async {
     await add('First line.', 3, 0.5);
     await add('Second line.', 3, 0.9);

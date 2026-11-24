@@ -6,6 +6,7 @@ import '../people/person.dart';
 import '../platform/app_settings.dart' as settings;
 import '../recording/reading_controller.dart';
 import '../recording/reference_builder.dart';
+import '../recording/room_meter.dart';
 import '../recording/scripts.dart';
 import '../recording/takes.dart';
 import '../theme.dart';
@@ -38,9 +39,11 @@ class _ReadingScreenState extends State<ReadingScreen> {
   @override
   void initState() {
     super.initState();
-    // A call or switching apps mid-take: the take is dropped and the session waits, paused.
-    _lifecycle = AppLifecycleListener(onHide: () => unawaited(c.onInterrupted()));
+    // A call or switching apps mid-take: the take is dropped and the session waits, paused. The
+    // room meter stops listening while the app is hidden and starts again when it's back.
+    _lifecycle = AppLifecycleListener(onHide: () => unawaited(c.onInterrupted()), onShow: () => unawaited(c.listen()));
     c.addListener(_maybeFinish);
+    unawaited(c.listen());
   }
 
   @override
@@ -83,6 +86,9 @@ class _ReadingScreenState extends State<ReadingScreen> {
 
   String get _subtitle {
     if (c.line.openPrompt) return 'answer in your own words';
+    // One sentence said several ways: the scene sets up how to say it.
+    final scene = c.line.scene;
+    if (scene != null) return '$scene:';
     if (c.mood == Mood.conversational) return "say it like you'd say it to a friend";
     return '${c.mood.label} · say it like you mean it';
   }
@@ -231,16 +237,32 @@ class _ReadingScreenState extends State<ReadingScreen> {
           )
         else if (c.noisyOffer)
           // Rejected for noise with the cleaner off: said plainly, with the fix one tap away.
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  c.hint!,
-                  style: TextStyle(color: context.colors.ink, fontWeight: FontWeight.w600),
+          Container(
+            key: const Key('noisy-offer'),
+            padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+            decoration: BoxDecoration(
+              color: context.colors.uncertainFill,
+              border: Border.all(color: context.colors.uncertainBorder, width: 1.5),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.warning_amber_rounded, color: context.colors.ink),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    c.hint!,
+                    style: TextStyle(color: context.colors.ink, fontWeight: FontWeight.w700),
+                  ),
                 ),
-              ),
-              TextButton(onPressed: () => c.cleanNoise = true, child: const Text('Turn on')),
-            ],
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: () => c.cleanNoise = true,
+                  style: FilledButton.styleFrom(backgroundColor: context.colors.ink),
+                  child: const Text('Turn on'),
+                ),
+              ],
+            ),
           )
         else if (c.hint != null)
           Text(c.hint!, style: TextStyle(color: context.colors.muted)),
@@ -256,6 +278,14 @@ class _ReadingScreenState extends State<ReadingScreen> {
             children: [
               // One line only: with a second, the longest passage no longer fit an A54 screen.
               const Expanded(child: Text('Clean up background noise')),
+              if (c.roomLevel != RoomLevel.unknown)
+                Text(
+                  c.roomLevel.label,
+                  // A noisy room with the cleaner off stands out, so people know to turn it on.
+                  style: c.suggestCleaner
+                      ? TextStyle(color: context.colors.ink, fontWeight: FontWeight.w700, fontSize: 13)
+                      : TextStyle(color: context.colors.muted, fontSize: 13),
+                ),
               Switch(value: c.cleanNoise, onChanged: c.recording || c.checking ? null : (on) => c.cleanNoise = on),
             ],
           ),

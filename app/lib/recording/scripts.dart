@@ -14,29 +14,147 @@ enum Mood {
 }
 
 class ScriptLine {
-  const ScriptLine(this.text, {this.openPrompt = false});
+  const ScriptLine(this.text, {this.openPrompt = false, this.scene, this.phrase});
   final String text;
 
   /// Answered in the person's own words instead of read; transcribed on the phone.
   final bool openPrompt;
+
+  /// Shown before a sentence line: the moment to say it in.
+  final String? scene;
+
+  /// For one sentence said several ways: which way this is.
+  final PhraseTone? phrase;
 }
 
+/// The ways one sentence is said in the core session (owner, 2026-11-23). Plain and question go
+/// with the conversational voice; the others make that mood's voice.
+enum PhraseTone {
+  plain(null),
+  question(null),
+  excited(Mood.excited),
+  annoyed(Mood.annoyed),
+  worried(Mood.worried);
+
+  const PhraseTone(this.mood);
+  final Mood? mood;
+}
+
+/// One sentence said five ways, each after a scene that sets it up. A session uses one set.
+const kPhraseSets = [
+  [
+    ScriptLine(
+      "You're coming home tonight.",
+      scene: 'Telling a friend the plan, matter-of-fact',
+      phrase: PhraseTone.plain,
+    ),
+    ScriptLine(
+      "You're coming home tonight?",
+      scene: "Your friend just said it, and you're surprised. Ask them",
+      phrase: PhraseTone.question,
+    ),
+    ScriptLine("You're coming home tonight!", scene: "You've missed them for months", phrase: PhraseTone.excited),
+    ScriptLine(
+      "You're coming home tonight.",
+      scene: 'They promised to stay and help you move',
+      phrase: PhraseTone.annoyed,
+    ),
+    ScriptLine(
+      "You're coming home tonight...",
+      scene: "There's a storm warning on the roads",
+      phrase: PhraseTone.worried,
+    ),
+  ],
+  [
+    ScriptLine(
+      'They moved the meeting to Friday.',
+      scene: 'Telling a coworker the news, matter-of-fact',
+      phrase: PhraseTone.plain,
+    ),
+    ScriptLine(
+      'They moved the meeting to Friday?',
+      scene: "A coworker just told you, and you can't believe it. Ask them",
+      phrase: PhraseTone.question,
+    ),
+    ScriptLine(
+      'They moved the meeting to Friday!',
+      scene: 'Friday means you get the long weekend you wanted',
+      phrase: PhraseTone.excited,
+    ),
+    ScriptLine(
+      'They moved the meeting to Friday.',
+      scene: 'You already cancelled your Friday plans for them once',
+      phrase: PhraseTone.annoyed,
+    ),
+    ScriptLine(
+      'They moved the meeting to Friday...',
+      scene: "Your big presentation isn't ready yet",
+      phrase: PhraseTone.worried,
+    ),
+  ],
+  [
+    ScriptLine(
+      'She sold the old car.',
+      scene: "Telling a friend what's new with your sister",
+      phrase: PhraseTone.plain,
+    ),
+    ScriptLine(
+      'She sold the old car?',
+      scene: "You thought she'd never part with it. Ask",
+      phrase: PhraseTone.question,
+    ),
+    ScriptLine('She sold the old car!', scene: "She's been saving for a new one for years", phrase: PhraseTone.excited),
+    ScriptLine('She sold the old car.', scene: 'She promised it to you first', phrase: PhraseTone.annoyed),
+    ScriptLine(
+      'She sold the old car...',
+      scene: 'It was the only way she could get to work',
+      phrase: PhraseTone.worried,
+    ),
+  ],
+  [
+    ScriptLine(
+      "We're going to the beach tomorrow.",
+      scene: 'Telling your family the weekend plan',
+      phrase: PhraseTone.plain,
+    ),
+    ScriptLine(
+      "We're going to the beach tomorrow?",
+      scene: 'Your partner just announced it out of nowhere. Ask',
+      phrase: PhraseTone.question,
+    ),
+    ScriptLine(
+      "We're going to the beach tomorrow!",
+      scene: "You've been begging to go all summer",
+      phrase: PhraseTone.excited,
+    ),
+    ScriptLine(
+      "We're going to the beach tomorrow.",
+      scene: 'You have a huge deadline and nobody asked you',
+      phrase: PhraseTone.annoyed,
+    ),
+    ScriptLine(
+      "We're going to the beach tomorrow...",
+      scene: 'The forecast says a big storm is coming in',
+      phrase: PhraseTone.worried,
+    ),
+  ],
+];
+
+/// The sentence sets from least to most used in [earlier] takes (shuffled within each count).
+List<List<ScriptLine>> _setsByUse(Random r, List<Take> earlier) {
+  final used = [
+    for (final t in earlier)
+      if (t.phrase != null) t.prompt ?? t.text,
+  ];
+  final count = [for (final s in kPhraseSets) used.where((u) => s.any((l) => l.text == u)).length];
+  final order = List.generate(kPhraseSets.length, (i) => i)..shuffle(r);
+  order.sort((a, b) => count[a].compareTo(count[b]));
+  return [for (final i in order) kPhraseSets[i]];
+}
+
+/// Moods without a way of saying the sentence keep a pack of their own (excited, annoyed and
+/// worried read from [kPhraseSets] since 2026-11-23).
 const _packs = {
-  Mood.excited: [
-    ScriptLine("No way, you got the tickets? That's amazing, I can't believe it!"),
-    ScriptLine("We actually won! I've been waiting all season for this!"),
-    ScriptLine("Oh, this is the best news I've heard all year!"),
-  ],
-  Mood.annoyed: [
-    ScriptLine("Seriously? I've asked you three times to put the dishes away."),
-    ScriptLine("I'm not waiting another hour just because they can't get organized."),
-    ScriptLine("Great, the printer's jammed again, right before the meeting."),
-  ],
-  Mood.worried: [
-    ScriptLine("Has anyone heard from her? She's usually home by now."),
-    ScriptLine("I don't know, the doctor said they'd call yesterday and they haven't."),
-    ScriptLine("What if the bridge is closed and we can't get back tonight?"),
-  ],
   Mood.storytelling: [
     ScriptLine("So there I was, halfway up the mountain, and it's starting to snow."),
     ScriptLine("My grandfather used to say he'd once outrun a bear, and we believed him."),
@@ -80,11 +198,14 @@ const kPrompts = [
   "What's the weirdest thing you believed as a kid?",
 ];
 
-/// One random passage and the prompts in a random order (the first is shown first).
+/// One random passage, one sentence set, and the prompts in a random order (the first is shown first).
 class CoreSession {
-  const CoreSession(this.passage, this.prompts);
+  const CoreSession(this.passage, this.prompts, this.phrases);
   final String passage;
   final List<String> prompts;
+
+  /// One sentence said five ways, between the passage and the question.
+  final List<ScriptLine> phrases;
 }
 
 /// Prefers the passage and questions this person hasn't used in [earlier] takes, picking at random
@@ -93,14 +214,14 @@ CoreSession pickCoreSession(Random r, {List<Take> earlier = const []}) {
   // A cut passage take holds only part of the passage; prompt is the full line shown.
   final read = [
     for (final t in earlier)
-      if (t.fromScript) t.prompt ?? t.text,
+      if (t.fromScript && t.phrase == null) t.prompt ?? t.text,
   ];
   final asked = [
     for (final t in earlier)
       if (!t.fromScript && t.prompt != null) t.prompt!,
   ];
   final passages = leastUsed(kPassages, read, r);
-  return CoreSession(passages[r.nextInt(passages.length)], byUse(kPrompts, asked, r));
+  return CoreSession(passages[r.nextInt(passages.length)], byUse(kPrompts, asked, r), _setsByUse(r, earlier).first);
 }
 
 /// The [options] used the fewest times in [used].
@@ -119,6 +240,21 @@ List<String> byUse(List<String> options, List<String> used, Random r) {
   return [for (final n in groups.keys.toList()..sort()) ...(groups[n]!..shuffle(r))];
 }
 
-/// The short pack for a mood. The conversational voice uses [pickCoreSession] instead.
-List<ScriptLine> scriptFor(Mood m) =>
-    _packs[m] ?? (throw ArgumentError.value(m, 'm', 'the conversational session uses pickCoreSession'));
+/// The lines for a mood session. Excited, annoyed and worried read their way of saying the
+/// sentence from three sets, least used in [earlier] first; storytelling has its own pack. The
+/// conversational voice uses [pickCoreSession] instead.
+List<ScriptLine> scriptFor(Mood m, Random r, {List<Take> earlier = const []}) {
+  if (m == Mood.conversational) {
+    throw ArgumentError.value(m, 'm', 'the conversational session uses pickCoreSession');
+  }
+  final tone = PhraseTone.values.where((t) => t.mood == m).firstOrNull;
+  if (tone == null) return _packs[m]!;
+  // Plain and annoyed share their words, so use is counted per way of saying it.
+  final used = [
+    for (final t in earlier)
+      if (t.phrase == tone.name) t.prompt ?? t.text,
+  ];
+  final lines = [for (final s in kPhraseSets) s[tone.index]]..shuffle(r);
+  lines.sort((a, b) => used.where((u) => u == a.text).length.compareTo(used.where((u) => u == b.text).length));
+  return lines.take(3).toList();
+}

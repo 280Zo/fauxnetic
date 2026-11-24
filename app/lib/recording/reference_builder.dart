@@ -12,7 +12,10 @@ import 'takes.dart';
 const kRefRate = 24000;
 const kRefMinSeconds = 3.0;
 const kRefMaxSeconds = 15.0;
-const _gapSeconds = 0.3;
+const _gapSeconds = kRefGapSeconds;
+
+/// Quiet between the takes joined into a voice.
+const kRefGapSeconds = 0.3;
 
 /// The reference the engine clones from for one mood: an encrypted 24 kHz WAV and its exact transcript.
 class VoiceRef {
@@ -59,7 +62,8 @@ const kAnswerMinSeconds = 7.0;
 
 List<Take> coreReferenceTakes(List<Take> conversational) {
   final answers = conversational.where((t) => !t.fromScript).toList();
-  final passage = conversational.where((t) => t.fromScript).toList();
+  // The plain and question sentences are read too, but too short to stand in for the passage.
+  final passage = conversational.where((t) => t.fromScript && t.phrase == null).toList();
   final answerSeconds = answers.fold<double>(0, (s, t) => s + t.seconds);
   if (answerSeconds >= kAnswerMinSeconds || passage.isEmpty) return answers;
   return passage;
@@ -101,11 +105,23 @@ class ReferenceBuilder {
     if (speech < kRefMinSeconds) throw NotEnoughSpeech(speech);
 
     final ordered = takes.where(chosen.contains).toList();
+    return _store([for (final t in ordered) (await _takes.samples(t), t.text)]);
+  }
+
+  /// Joins [pieces] (16 kHz audio and its exact words) in the order given, with 0.3 s gaps, and
+  /// stores the result encrypted. For a mood voice made of the passage and that mood's sentences.
+  /// Throws [NotEnoughSpeech] under 3 s.
+  Future<VoiceRef> buildJoined(List<(Float32List, String)> pieces) async {
+    final speech = pieces.fold<double>(0, (s, p) => s + p.$1.length / 16000);
+    if (speech < kRefMinSeconds) throw NotEnoughSpeech(speech);
+    return _store(pieces);
+  }
+
+  Future<VoiceRef> _store(List<(Float32List, String)> pieces) async {
     final gap = Float32List((_gapSeconds * kRefRate).round());
     final parts = <Float32List>[];
-    for (final t in ordered) {
+    for (final (raw, _) in pieces) {
       if (parts.isNotEmpty) parts.add(gap);
-      final raw = await _takes.samples(t);
       final trimmed = trimSilence(raw, 16000);
       parts.add(resample16to24(trimmed.isEmpty ? raw : trimmed));
     }
@@ -118,6 +134,6 @@ class ReferenceBuilder {
     final id = List.generate(8, (_) => _random.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
     final rel = 'refs/$id.bin';
     await _vault.encryptBytes(encodeWav(joined, kRefRate), File('${dir.path}/$rel'));
-    return VoiceRef(clipFile: rel, refText: ordered.map((t) => t.text).join(' '), seconds: joined.length / kRefRate);
+    return VoiceRef(clipFile: rel, refText: pieces.map((p) => p.$2).join(' '), seconds: joined.length / kRefRate);
   }
 }

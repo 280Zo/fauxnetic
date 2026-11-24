@@ -9,6 +9,7 @@ import '../people/person.dart';
 import 'align.dart';
 import 'recorder.dart';
 import 'reference_builder.dart';
+import 'room_meter.dart';
 import 'scripts.dart';
 import 'take_check.dart';
 import 'takes.dart';
@@ -30,6 +31,9 @@ const _rate = 16000;
 
 /// A chunk louder than this counts as speech (the same level as the "speak louder" check).
 const _speechDb = -40.0;
+
+/// How far over the room's level a chunk must be to count as speaking.
+const _voiceOverRoomDb = 12.0;
 
 /// Words per second assumed until the reader's own pace is known, and the range it may take.
 const _defaultPace = 2.6;
@@ -64,6 +68,7 @@ class ReadingController extends ChangeNotifier {
     this.replace = false,
     List<Take> earlier = const [],
     this.cleaner,
+    this.denoise,
   }) : _random = random ?? Random(),
        _earlier = earlier {
     if (mood == Mood.conversational) core = pickCoreSession(_random, earlier: earlier);
@@ -89,8 +94,47 @@ class ReadingController extends ChangeNotifier {
   /// Cleans background noise from a take when [cleanNoise] is on; null: no cleaner on offer.
   final TakeCleaner? cleaner;
 
+  /// Removes background noise without evening out the loudness: with the cleaner on, the level bars
+  /// and the follow-along use it as audio comes in. Null: both use the raw microphone.
+  final Future<Float32List> Function(Float32List pcm16k)? denoise;
+  LiveDenoiser? _live;
+
   /// Whether this session can clean background noise from its takes.
   bool get canClean => cleaner != null;
+
+  /// Shows [chunk] on the level bars: as the cleaner leaves it when the cleaner is on.
+  void _showLevel(Float32List chunk) {
+    final d = denoise;
+    if (!_cleanNoise || d == null) {
+      _live = null;
+      _meter.add(chunk);
+      return;
+    }
+    final meter = _meter;
+    unawaited(
+      (_live ??= LiveDenoiser(d)).add(chunk).then((clean) {
+        if (identical(meter, _meter)) {
+          meter.add(clean);
+          _changed();
+        }
+      }),
+    );
+  }
+
+  /// Speaking, for the highlight and the automatic stop: louder than [_speechDb] and clearly above
+  /// the room (2026-11-23: a steady hum over -40 dBFS moved the highlight on its own).
+  bool _isVoice(Float32List chunk) {
+    if (chunk.isEmpty) return false;
+    // The room as heard before the take, only ever lowered during it: measured during the take
+    // alone, steady reading would start to look like the room.
+    final before = _roomBeforeTake, now = _room.roomDb;
+    if (before != null && now != null && now < before) _roomBeforeTake = now;
+    final room = _roomBeforeTake;
+    final threshold = room == null ? _speechDb : max(_speechDb, room + _voiceOverRoomDb);
+    return chunkDb(chunk) > threshold;
+  }
+
+  double? _roomBeforeTake;
 
   /// "Clean up background noise": off at the start of every session (owner, 2026-11-23).
   bool get cleanNoise => _cleanNoise;
@@ -105,14 +149,70 @@ class ReadingController extends ChangeNotifier {
   /// The last take was rejected as noisy with the cleaner off: the screen offers to turn it on.
   var noisyOffer = false;
 
+  /// How noisy the room is, heard while listening or recording (owner, 2026-11-23).
+  RoomLevel get roomLevel => _room.level;
+
+  /// The room is noisy and the cleaner is off: the screen points at the switch.
+  bool get suggestCleaner => canClean && !_cleanNoise && roomLevel == RoomLevel.noisy;
+
+  final _room = RoomMeter();
+  var _listenWanted = false;
+  var _micForTake = false;
+  StreamSubscription<Float32List>? _listenSub;
+  Future<void>? _starting;
+
+  /// While the screen is open and no take is being recorded, the microphone listens for the room
+  /// meter. Nothing heard is kept. Without the permission it does nothing (Record asks for it).
+  Future<void> listen() async {
+    _listenWanted = true;
+    await _startListening();
+  }
+
+  Future<void> _startListening() => _starting ??= _doStartListening().whenComplete(() => _starting = null);
+
+  bool get _mayListen => _listenWanted && !_disposed && !recording && !checking && !_micForTake && !done;
+
+  Future<void> _doStartListening() async {
+    if (!_mayListen || _listenSub != null) return;
+    if (!await _mic.hasPermission() || !_mayListen) return;
+    final Stream<Float32List> stream;
+    try {
+      stream = await _mic.start();
+    } catch (_) {
+      return;
+    }
+    if (!_mayListen) {
+      await _mic.stop();
+      return;
+    }
+    _listenSub = stream.listen((chunk) {
+      _room.add(chunk);
+      if (!_pausedTake) _showLevel(chunk);
+      _changed();
+    }, onError: (Object _) => _listenSub = null);
+  }
+
+  Future<void> _stopListening() async {
+    await _starting;
+    final s = _listenSub;
+    if (s == null) return;
+    _listenSub = null;
+    await s.cancel();
+    await _mic.stop();
+  }
+
   /// The conversational session: one passage, then one question; null for mood packs.
   CoreSession? core;
   var _prompt = 0;
 
+  /// A mood session's lines, picked once when it starts.
+  late final List<ScriptLine> _moodLines = core == null ? scriptFor(mood, _random, earlier: _earlier) : const [];
+
+  /// Core: the passage, one sentence said five ways (each after its scene), then a question.
   List<ScriptLine> get lines {
     final c = core;
-    if (c == null) return scriptFor(mood);
-    return [ScriptLine(c.passage), ScriptLine(c.prompts[_prompt], openPrompt: true)];
+    if (c == null) return _moodLines;
+    return [ScriptLine(c.passage), ...c.phrases, ScriptLine(c.prompts[_prompt], openPrompt: true)];
   }
 
   bool get canChangePassage => core != null && !recording && !checking && !building;
@@ -133,7 +233,7 @@ class ReadingController extends ChangeNotifier {
         if (t.fromScript) t.prompt ?? t.text,
     ];
     final pick = leastUsed(others, used, _random);
-    core = CoreSession(pick[_random.nextInt(pick.length)], c.prompts);
+    core = CoreSession(pick[_random.nextInt(pick.length)], c.prompts, c.phrases);
     for (final t in _sessionTakes.where((t) => t.fromScript).toList()) {
       await _takes.delete(t);
       _sessionTakes.remove(t);
@@ -274,7 +374,19 @@ class ReadingController extends ChangeNotifier {
   }
 
   Future<void> record() async {
-    if (recording || checking || done) return;
+    if (recording || checking || done || _micForTake) return;
+    _micForTake = true;
+    try {
+      await _record();
+    } finally {
+      _micForTake = false;
+    }
+  }
+
+  Future<void> _record() async {
+    // The room meter hands the microphone over to the take.
+    await _stopListening();
+    _roomBeforeTake = _room.roomDb;
     error = null;
     if (!await _mic.hasPermission()) {
       error = micDeniedMessage(person.name);
@@ -305,8 +417,9 @@ class ReadingController extends ChangeNotifier {
         if (session != _session) return;
         _chunks.add(chunk);
         _samples += chunk.length;
-        _meter.add(chunk);
-        if (chunk.isNotEmpty && _meter.levelDb > _speechDb) {
+        _room.add(chunk);
+        _showLevel(chunk);
+        if (_isVoice(chunk)) {
           _firstVoiceAt ??= _samples - chunk.length;
           _voiced += chunk.length;
           _lastVoiceEnd = _samples;
@@ -335,7 +448,10 @@ class ReadingController extends ChangeNotifier {
     final voicedAtRequest = _voiced;
     final sw = Stopwatch()..start();
     try {
-      final heard = await _follow.transcribe(_joined());
+      // With the cleaner on, the follow-along hears the voice without the room.
+      final d = denoise;
+      final audio = _cleanNoise && d != null ? await d(_joined()) : _joined();
+      final heard = await _follow.transcribe(audio);
       if (session == _session && recording) {
         final heardWords = spokenPrefix(lineWords, heard.map((w) => w.text).toList());
         if (heardWords > confirmedWords) {
@@ -424,6 +540,14 @@ class ReadingController extends ChangeNotifier {
 
   Future<void> stopAndCheck() async {
     if (!recording) return;
+    try {
+      await _check();
+    } finally {
+      await _startListening();
+    }
+  }
+
+  Future<void> _check() async {
     // Cleared before any await, so an auto-stop and a tap on Stop can't both run the check.
     recording = false;
     checking = true;
@@ -501,14 +625,16 @@ class ReadingController extends ChangeNotifier {
       }
       text = again;
     }
+    // A sentence said excited, annoyed or worried belongs to that mood's voice.
     final saved = await _takes.save(
       person.id,
-      mood,
+      line.phrase?.mood ?? mood,
       audio,
       text: text,
       fromScript: !open,
       score: score.toDouble(),
       prompt: line.text,
+      phrase: line.phrase?.name,
     );
     _sessionTakes.add(saved);
     if (session != _session) return;
@@ -536,6 +662,7 @@ class ReadingController extends ChangeNotifier {
     await _discard();
     hint = null;
     _changed();
+    await _startListening();
   }
 
   Future<void> skip() async {
@@ -544,6 +671,7 @@ class ReadingController extends ChangeNotifier {
     hint = null;
     _advance();
     _changed();
+    await _startListening();
   }
 
   /// Stops the microphone but keeps the take; [record] resumes it.
@@ -558,11 +686,14 @@ class ReadingController extends ChangeNotifier {
     paused = true;
     hint = null;
     _changed();
+    await _startListening();
   }
 
   /// A call, the app going to the background, or the screen turning off: the take is dropped,
-  /// paused or not.
+  /// paused or not, and the room meter stops listening until [listen] is called again.
   Future<void> onInterrupted() async {
+    _listenWanted = false;
+    await _stopListening();
     if (!recording && !checking && !_pausedTake) return;
     await _discard();
     paused = true;
@@ -596,7 +727,12 @@ class ReadingController extends ChangeNotifier {
     try {
       VoiceRef ref;
       try {
-        ref = await _builder.build(core ? coreReferenceTakes(forMood) : forMood, mood);
+        final sentences = forMood.where((t) => t.phrase != null).toList();
+        ref = core
+            ? await _builder.build(coreReferenceTakes(forMood), mood)
+            : sentences.isNotEmpty
+            ? await _sentenceMoodRef(sentences)
+            : await _builder.build(forMood, mood);
       } on NotEnoughSpeech {
         if (!core) rethrow;
         // The chosen recording was too short on its own; any mix of what was kept may still do.
@@ -614,6 +750,7 @@ class ReadingController extends ChangeNotifier {
           await _takes.delete(t);
         }
       }
+      if (core) await _buildSentenceMoods();
       return _person;
     } on NotEnoughSpeech {
       error = core ? kNothingUsableMessage : kNotEnoughMoodSpeechMessage;
@@ -628,8 +765,62 @@ class ReadingController extends ChangeNotifier {
     }
   }
 
+  /// After the core voice: excited, annoyed and worried voices from this session's sentences. One
+  /// that can't be made is left out; the person can record that mood on its own later.
+  Future<void> _buildSentenceMoods() async {
+    for (final m in [Mood.excited, Mood.annoyed, Mood.worried]) {
+      final sentences = _sessionTakes.where((t) => t.mood == m && t.phrase != null).toList();
+      if (sentences.isEmpty) continue;
+      VoiceRef ref;
+      try {
+        ref = await _sentenceMoodRef(sentences);
+      } on NotEnoughSpeech {
+        continue;
+      }
+      try {
+        _person = await _people.setVoice(person.id, m, ref);
+      } catch (_) {
+        await _builder.discard(ref);
+        rethrow;
+      }
+    }
+  }
+
+  /// A mood voice: the person's passage (or, without one, their longest answer) cut at a pause so
+  /// that up to three of the mood's sentences fit after it within 15 s. The passage carries the
+  /// voice, the sentences the mood (2026-11-23; whether the ending carries it is being tested).
+  Future<VoiceRef> _sentenceMoodRef(List<Take> sentences) async {
+    final picked = ([...sentences]..sort((a, b) => b.score.compareTo(a.score))).take(3).toList();
+    final plain = (await _takes.forPerson(person.id))
+        .where((t) => t.mood == Mood.conversational && t.phrase == null)
+        .toList();
+    final passages = plain.where((t) => t.fromScript).toList();
+    final answers = plain.where((t) => !t.fromScript).toList()..sort((a, b) => b.seconds.compareTo(a.seconds));
+    final base = passages.isNotEmpty ? passages.last : answers.firstOrNull;
+    final ends = [for (final t in picked) (await _takes.samples(t), t.text)];
+    if (base == null) return _builder.buildJoined(ends);
+    final room = kRefMaxSeconds - picked.fold<double>(0, (s, t) => s + t.seconds + kRefGapSeconds);
+    final pcm = await _takes.samples(base);
+    final end = cutInPause(pcm, kTakeRate, maxSeconds: room);
+    var text = base.text;
+    if (end < pcm.length) {
+      // The cut part's own words, as for a take cut at 15 s: the transcript must match the audio.
+      String heard;
+      try {
+        heard = (await _full.transcribe(Float32List.sublistView(pcm, 0, end))).map((w) => w.text).join(' ').trim();
+      } on TranscriberError {
+        heard = '';
+      }
+      if (heard.isEmpty) return _builder.buildJoined(ends);
+      text = heard;
+    }
+    return _builder.buildJoined([(Float32List.sublistView(pcm, 0, end), text), ...ends]);
+  }
+
   /// Leaving the screen. A core session that never produced a voice leaves no person behind.
   Future<void> abandon() async {
+    _listenWanted = false;
+    await _stopListening();
     await _discard();
     if (mood == Mood.conversational && !_person.ready) await _people.delete(person.id);
   }
@@ -637,6 +828,8 @@ class ReadingController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _listenWanted = false;
+    unawaited(_stopListening());
     unawaited(_discard());
     super.dispose();
   }

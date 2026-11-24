@@ -124,5 +124,21 @@ ThemeData buildTheme(Brightness brightness) {
     textTheme: base.textTheme.apply(fontFamily: kFontFamily, bodyColor: m.ink, displayColor: m.ink),
     appBarTheme: AppBarTheme(backgroundColor: m.paper, foregroundColor: m.ink, elevation: 0, scrolledUnderElevation: 0),
     dividerTheme: DividerThemeData(color: m.rule, thickness: 1),
+    // Off reads as off, not as disabled: Material's default outlined it in the faint rule grey
+    // (owner, 2026-11-23). Disabled stays faded.
+    switchTheme: SwitchThemeData(
+      thumbColor: WidgetStateProperty.resolveWith((s) {
+        if (s.contains(WidgetState.disabled)) return m.rule;
+        return s.contains(WidgetState.selected) ? m.paper : m.muted;
+      }),
+      trackColor: WidgetStateProperty.resolveWith((s) {
+        if (s.contains(WidgetState.disabled)) return m.card;
+        return s.contains(WidgetState.selected) ? m.ink : m.card;
+      }),
+      trackOutlineColor: WidgetStateProperty.resolveWith((s) {
+        if (s.contains(WidgetState.disabled)) return m.rule;
+        return s.contains(WidgetState.selected) ? m.ink : m.muted;
+      }),
+    ),
   );
 }

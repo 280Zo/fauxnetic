@@ -17,6 +17,9 @@ const _maxWer = 0.35;
 
 double _db(double rms) => rms <= 0 ? _silentDb : max(_silentDb, 20 * log(rms) / ln10);
 
+/// The level of [chunk] in dBFS.
+double chunkDb(Float32List chunk) => _db(_rms(chunk, 0, chunk.length));
+
 double _rms(Float32List s, int start, int end) {
   var sum = 0.0;
   for (var i = start; i < end; i++) {

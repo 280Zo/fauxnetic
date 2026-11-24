@@ -119,26 +119,78 @@ void main() {
     }
   });
 
-  test('each mood pack has 3 lines', () {
-    for (final m in Mood.values.where((m) => m != Mood.conversational)) {
-      final pack = scriptFor(m);
-      expect(pack.length, 3, reason: m.name);
-      expect(pack.every((l) => !l.openPrompt), isTrue, reason: m.name);
+  test('storytelling keeps its pack of 3 lines', () {
+    final pack = scriptFor(Mood.storytelling, Random(1));
+    expect(pack.length, 3);
+    expect(pack.every((l) => !l.openPrompt && l.phrase == null), isTrue);
+    expect(pack.where((l) => contraction.hasMatch(l.text)).length / 3, greaterThanOrEqualTo(0.6));
+    for (final l in pack) {
+      expect(words(l.text), inInclusiveRange(6, 22), reason: l.text);
     }
   });
 
-  test('most mood lines use contractions', () {
-    for (final m in Mood.values.where((m) => m != Mood.conversational)) {
-      final withOne = scriptFor(m).where((l) => contraction.hasMatch(l.text)).length;
-      expect(withOne / 3, greaterThanOrEqualTo(0.6), reason: m.name);
-    }
-  });
+  String bare(String s) => s.toLowerCase().replaceAll(RegExp(r'[^a-z ]'), '');
 
-  test('mood lines are 6 to 22 words', () {
-    for (final m in Mood.values.where((m) => m != Mood.conversational)) {
-      for (final l in scriptFor(m)) {
-        expect(words(l.text), inInclusiveRange(6, 22), reason: l.text);
+  test('each sentence set is one sentence said five ways, each with its scene', () {
+    expect(kPhraseSets, hasLength(4));
+    for (final set in kPhraseSets) {
+      expect([for (final l in set) l.phrase], PhraseTone.values);
+      expect({for (final l in set) bare(l.text)}, hasLength(1), reason: 'the same words: ${set.first.text}');
+      expect(set[PhraseTone.question.index].text, endsWith('?'));
+      expect(set[PhraseTone.excited.index].text, endsWith('!'));
+      expect(set[PhraseTone.worried.index].text, endsWith('...'));
+      for (final l in set) {
+        expect(l.scene, isNotEmpty, reason: l.text);
+        expect(words(l.text), inInclusiveRange(4, 8), reason: l.text);
       }
+    }
+    expect(PhraseTone.plain.mood, isNull);
+    expect(PhraseTone.question.mood, isNull);
+    expect(
+      [PhraseTone.excited.mood, PhraseTone.annoyed.mood, PhraseTone.worried.mood],
+      [Mood.excited, Mood.annoyed, Mood.worried],
+    );
+  });
+
+  Take phraseTake(ScriptLine l) => Take(
+    id: l.text.hashCode.toString(),
+    personId: 'p',
+    mood: l.phrase!.mood ?? Mood.conversational,
+    text: l.text,
+    fromScript: true,
+    seconds: 2,
+    score: 1,
+    file: 'f',
+    prompt: l.text,
+    phrase: l.phrase!.name,
+  );
+
+  test('a core session brings one sentence set, the one used least', () {
+    final c = pickCoreSession(Random(1));
+    expect(kPhraseSets, contains(c.phrases));
+    final earlier = [for (final l in kPhraseSets[0]) phraseTake(l), for (final l in kPhraseSets[1]) phraseTake(l)];
+    for (var s = 0; s < 30; s++) {
+      final next = pickCoreSession(Random(s), earlier: earlier).phrases;
+      expect([kPhraseSets[2], kPhraseSets[3]], contains(next));
+    }
+  });
+
+  test('sentence takes do not count as the passage read', () {
+    final earlier = [for (final set in kPhraseSets) ...set.map(phraseTake)];
+    final seen = {for (var s = 0; s < 100; s++) pickCoreSession(Random(s), earlier: earlier).passage};
+    expect(seen, kPassages.toSet());
+  });
+
+  test("excited, annoyed and worried sessions read that mood's sentence from 3 sets, least used first", () {
+    for (final m in [Mood.excited, Mood.annoyed, Mood.worried]) {
+      final lines = scriptFor(
+        m,
+        Random(2),
+        earlier: [phraseTake(kPhraseSets[0].firstWhere((l) => l.phrase?.mood == m))],
+      );
+      expect(lines, hasLength(3));
+      expect(lines.every((l) => l.phrase?.mood == m && (l.scene ?? '').isNotEmpty), isTrue);
+      expect(lines.map((l) => l.text), isNot(contains(kPhraseSets[0].firstWhere((l) => l.phrase?.mood == m).text)));
     }
   });
 

@@ -21,6 +21,7 @@ class Take {
     required this.score,
     required this.file,
     this.prompt,
+    this.phrase,
   });
 
   final String id;
@@ -42,6 +43,9 @@ class Take {
   /// A later session uses it to ask for text not used yet. Null for takes stored before it existed.
   final String? prompt;
 
+  /// A sentence said one way ([PhraseTone] name), not the passage; null for other takes.
+  final String? phrase;
+
   Map<String, Object?> toJson() => {
     'id': id,
     'personId': personId,
@@ -52,6 +56,7 @@ class Take {
     'score': score,
     'file': file,
     'prompt': prompt,
+    'phrase': phrase,
   };
 
   factory Take.fromJson(Map<String, Object?> j) => Take(
@@ -64,6 +69,7 @@ class Take {
     score: (j['score']! as num).toDouble(),
     file: j['file']! as String,
     prompt: j['prompt'] as String?,
+    phrase: j['phrase'] as String?,
   );
 }
 
@@ -102,6 +108,7 @@ class TakeStore {
     required bool fromScript,
     required double score,
     String? prompt,
+    String? phrase,
   }) async {
     final id = _newId();
     final rel = 'takes/$id.bin';
@@ -116,6 +123,7 @@ class TakeStore {
       score: score,
       file: rel,
       prompt: prompt,
+      phrase: phrase,
     );
     await _locked(() async => _save([...await _all(), t]));
     return t;
@@ -134,6 +142,7 @@ class TakeStore {
       score: take.score,
       file: take.file,
       prompt: take.prompt,
+      phrase: take.phrase,
     );
     await _save([for (final t in all) t.id == take.id ? fixed : t]);
     return fixed;

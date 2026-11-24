@@ -7,6 +7,7 @@ import 'package:fauxnetic/people/people_repo.dart';
 import 'package:fauxnetic/people/person.dart';
 import 'package:fauxnetic/recording/reading_controller.dart';
 import 'package:fauxnetic/recording/reference_builder.dart';
+import 'package:fauxnetic/recording/room_meter.dart';
 import 'package:fauxnetic/recording/scripts.dart';
 import 'package:fauxnetic/recording/takes.dart';
 import 'package:fauxnetic/recording/transcriber.dart';
@@ -57,6 +58,22 @@ void main() {
     await c.record();
     await mic.say(goodTake());
     await c.stopAndCheck();
+  }
+
+  /// Skips the passage and the five sentences.
+  Future<void> toQuestion(ReadingController c) async {
+    while (!c.line.openPrompt) {
+      await c.skip();
+    }
+  }
+
+  /// After the passage: skips the five sentences to the question.
+  Future<void> skipSentences(ReadingController c) => toQuestion(c);
+
+  /// Reads the passage well, then skips the sentences.
+  Future<void> readPassage(ReadingController c) async {
+    await readGood(c);
+    await skipSentences(c);
   }
 
   test('follow-along marks spoken words', () async {
@@ -181,6 +198,206 @@ void main() {
     expect(saved.text, c.lines.first.text);
     expect(saved.fromScript, isTrue);
     expect(saved.mood, Mood.conversational);
+  });
+
+  group('one sentence, five ways', () {
+    test('a core session is the passage, one sentence said five ways, then a question', () {
+      final c = controller();
+      expect(c.lines, hasLength(7));
+      expect(c.lines.first.phrase, isNull);
+      expect([for (final l in c.lines.sublist(1, 6)) l.phrase], PhraseTone.values);
+      expect(c.lines.sublist(1, 6).every((l) => (l.scene ?? '').isNotEmpty), isTrue);
+      expect(c.lines.last.openPrompt, isTrue);
+    });
+
+    test('each sentence is kept with its mood and marked as a sentence', () async {
+      final c = controller();
+      await c.skip(); // the passage
+      for (var i = 0; i < 5; i++) {
+        await readGood(c);
+      }
+      final saved = await takes.forPerson(sam.id);
+      expect(
+        {for (final t in saved) t.phrase: t.mood},
+        {
+          'plain': Mood.conversational,
+          'question': Mood.conversational,
+          'excited': Mood.excited,
+          'annoyed': Mood.annoyed,
+          'worried': Mood.worried,
+        },
+      );
+      expect(c.line.openPrompt, isTrue);
+    });
+
+    test('finishing makes excited, annoyed and worried voices: the passage, then the sentence', () async {
+      final c = controller();
+      for (var i = 0; i < 6; i++) {
+        await readGood(c); // the passage and the five sentences
+      }
+      while (!c.done) {
+        await c.skip();
+      }
+      final p = await c.finish();
+      expect(p, isNotNull);
+      final excited = c.lines.firstWhere((l) => l.phrase == PhraseTone.excited).text;
+      for (final m in [Mood.excited, Mood.annoyed, Mood.worried]) {
+        expect(p!.recorded(m), isTrue, reason: m.name);
+        expect(p.voices[m]!.refText, startsWith(c.lines.first.text.substring(0, 20)));
+        expect(p.voices[m]!.seconds, lessThanOrEqualTo(15));
+      }
+      expect(p!.voices[Mood.excited]!.refText, endsWith(excited));
+      expect(p.voices[Mood.conversational]!.refText, c.lines.first.text, reason: 'the main voice is the passage alone');
+    });
+
+    test('an excited session reads three excited sentences, each with its scene', () {
+      final c = controller(Mood.excited);
+      expect(c.lines, hasLength(3));
+      expect(c.lines.every((l) => l.phrase == PhraseTone.excited && (l.scene ?? '').isNotEmpty), isTrue);
+    });
+  });
+
+  group('in a noisy room', () {
+    // Owner, 2026-11-23: with background noise the follow-along highlight was way off. Anything over
+    // -40 dBFS counted as speaking, so a hum moved the highlight and the take never heard its pause.
+    test('steady noise alone does not move the highlight', () async {
+      final c = controller();
+      await c.listen();
+      await mic.say(Float32List.fromList(noise(1, -35, Random(1))));
+      follow.next = () => const [];
+      await c.record();
+      await mic.say(Float32List.fromList(noise(3, -35, Random(2))));
+      expect(c.spokenWords, 0);
+      await c.redo();
+    });
+
+    test('speech over the noise still moves it', () async {
+      final c = controller();
+      await c.listen();
+      await mic.say(Float32List.fromList(noise(1, -35, Random(1))));
+      follow.next = () => const [];
+      await c.record();
+      await mic.say(bursts(-15, -35));
+      expect(c.spokenWords, greaterThan(0));
+      await c.redo();
+    });
+
+    ReadingController withDenoise() {
+      final c = ReadingController(
+        sam,
+        Mood.conversational,
+        mic,
+        follow,
+        full,
+        takes,
+        people,
+        builder,
+        random: Random(1),
+        cleaner: (pcm) async => pcm,
+        denoise: (pcm) async => Float32List(pcm.length), // removes everything
+      );
+      full.next = () => words(c.line.text);
+      return c;
+    }
+
+    test('with the cleaner on, the level bars show the cleaned sound', () async {
+      final off = withDenoise();
+      await off.record();
+      await mic.say(Float32List.fromList(noise(1, -30, Random(3))), chunk: 1600);
+      expect(off.levelBars.last, greaterThan(0.3), reason: 'off: the raw room');
+      await off.redo();
+
+      final on = withDenoise()..cleanNoise = true;
+      await on.record();
+      await mic.say(Float32List.fromList(noise(1, -30, Random(3))), chunk: 1600);
+      await settle();
+      expect(on.levelBars.every((b) => b == 0), isTrue, reason: 'on: what the cleaner leaves');
+      await on.redo();
+    });
+
+    test('with the cleaner on, the follow-along hears the cleaned sound', () async {
+      final c = withDenoise()..cleanNoise = true;
+      final heard = <double>[];
+      follow.nextFor = (pcm) {
+        heard.add(pcm.fold(0.0, (m, v) => max(m, v.abs())));
+        return const [];
+      };
+      await c.record();
+      await mic.say(goodTake());
+      await settle();
+      expect(heard, isNotEmpty);
+      expect(heard.every((h) => h == 0), isTrue);
+      await c.redo();
+    });
+  });
+
+  group('room meter', () {
+    test('listening shows the room before recording and keeps nothing', () async {
+      final c = controller();
+      await c.listen();
+      expect(mic.live, isTrue);
+      await mic.say(Float32List.fromList(noise(1, -35, Random(1))));
+      expect(c.roomLevel, RoomLevel.noisy);
+      expect(c.recording, isFalse);
+      expect(await takes.forPerson(sam.id), isEmpty);
+    });
+
+    test('Record takes the microphone over, and listening comes back after the take', () async {
+      final c = controller();
+      await c.listen();
+      await readGood(c);
+      expect(c.index, 1);
+      expect(mic.starts, 3, reason: 'listen, record, listen again');
+      expect(mic.live, isTrue);
+      expect(await takes.forPerson(sam.id), hasLength(1));
+    });
+
+    test('the room shows while recording too', () async {
+      final c = controller();
+      await c.record();
+      await mic.say(bursts(-20, -36));
+      expect(c.roomLevel, RoomLevel.noisy);
+      await c.redo();
+    });
+
+    test('without the microphone permission, listening does nothing and shows no error', () async {
+      mic.allowed = false;
+      final c = controller();
+      await c.listen();
+      expect(mic.starts, 0);
+      expect(c.error, isNull);
+    });
+
+    test('an interruption stops listening; listening again resumes', () async {
+      final c = controller();
+      await c.listen();
+      await c.onInterrupted();
+      expect(mic.live, isFalse);
+      await c.listen();
+      expect(mic.live, isTrue);
+    });
+
+    test('a noisy room suggests the cleaner while it is off', () async {
+      cleanedSetup() => ReadingController(
+        sam,
+        Mood.conversational,
+        mic,
+        follow,
+        full,
+        takes,
+        people,
+        builder,
+        random: Random(1),
+        cleaner: (pcm) async => pcm,
+      );
+      final c = cleanedSetup();
+      await c.listen();
+      await mic.say(Float32List.fromList(noise(1, -35, Random(1))));
+      expect(c.suggestCleaner, isTrue);
+      c.cleanNoise = true;
+      expect(c.suggestCleaner, isFalse);
+      expect(controller().suggestCleaner, isFalse, reason: 'no cleaner, nothing to suggest');
+    });
   });
 
   group('voice cleaner', () {
@@ -353,7 +570,7 @@ void main() {
 
   test('another question while paused starts a fresh answer', () async {
     final c = controller();
-    await c.skip();
+    await toQuestion(c);
     await c.record();
     await mic.say(goodTake().sublist(0, 16000));
     await c.pause();
@@ -406,24 +623,24 @@ void main() {
 
   Float32List longAnswer() => Float32List.fromList([...goodTake(), ...goodTake()]);
 
-  test('core session is one passage then one question', () {
+  test('core session is one passage, five sentences, then one question', () {
     final c = controller();
-    expect(c.total, 2);
+    expect(c.total, 7);
     expect(kPassages, contains(c.lines[0].text));
     expect(c.lines[0].openPrompt, isFalse);
-    expect(kPrompts, contains(c.lines[1].text));
-    expect(c.lines[1].openPrompt, isTrue);
+    expect(kPrompts, contains(c.lines[6].text));
+    expect(c.lines[6].openPrompt, isTrue);
   });
 
   test('another question swaps only the prompt', () async {
     final c = controller();
-    await c.skip();
+    await toQuestion(c);
     final passage = c.lines[0].text, prompt = c.line.text;
     c.nextPrompt();
     expect(c.line.text, isNot(prompt));
     expect(kPrompts, contains(c.line.text));
     expect(c.lines[0].text, passage);
-    expect(c.index, 1);
+    expect(c.index, 6);
   });
 
   test('changing the passage drops its take', () async {
@@ -506,7 +723,7 @@ void main() {
   test('silence around an answer does not count toward its 7 s', () async {
     final c = controller();
     final passage = c.line.text;
-    await readGood(c);
+    await readPassage(c);
     full.next = () => words('Flying, obviously, every single day.');
     await c.record();
     await mic.say(Float32List.fromList([...Float32List(16000), ...seconds(4), ...Float32List(3 * 16000)]));
@@ -521,7 +738,7 @@ void main() {
 
   test('a long answer is cut and stores the words heard in what is kept', () async {
     final c = controller();
-    await c.skip();
+    await toQuestion(c);
     final said = List.generate(50, (i) => 'word$i').join(' ');
     final kept = said.split(' ').take(33).join(' ');
     // Meme (2026-11-16): the audio ran a word past its transcript, and Qwen skipped the start of lines.
@@ -547,7 +764,7 @@ void main() {
 
     test('a short answer asks one more question instead of finishing', () async {
       final c = controller();
-      await readGood(c);
+      await readPassage(c);
       final first = c.line.text;
       expect(c.fill, VoiceFill.basic);
       await answer(c, 4, 'Flying, obviously, every single day.');
@@ -561,7 +778,7 @@ void main() {
 
     test('answers adding up to 7 s finish by themselves', () async {
       final c = controller();
-      await readGood(c);
+      await readPassage(c);
       await answer(c, 4, 'Flying, obviously, every single day.');
       await answer(c, 4, 'Pizza with pineapple, and I will not apologize.');
       expect(c.done, isTrue);
@@ -571,7 +788,7 @@ void main() {
     test('Finish at Basic builds from the passage', () async {
       final c = controller();
       final passage = c.line.text;
-      await readGood(c);
+      await readPassage(c);
       await answer(c, 4, 'Flying, obviously, every single day.');
       c.finishAnswers();
       expect(c.done, isTrue);
@@ -581,7 +798,7 @@ void main() {
 
     test('earlier answers count when adding more, not when re-recording', () async {
       final first = controller();
-      await first.skip();
+      await toQuestion(first);
       await answer(first, 8, 'A long first answer that easily fills eight seconds of talking.');
       sam = (await first.finish())!;
       final earlier = await takes.forPerson(sam.id);
@@ -607,7 +824,7 @@ void main() {
       expect(more.fill, VoiceFill.good, reason: 'the earlier 8 s answer still counts');
       final redo = again(replace: true);
       expect(redo.fill, VoiceFill.basic);
-      await redo.skip();
+      await toQuestion(redo);
       await answer(redo, 2, 'Short one.');
       expect(redo.done, isFalse, reason: 'only this session counts when re-recording');
     });
@@ -616,7 +833,7 @@ void main() {
       // Owner, 2026-11-16: "I have to worry" for "I don't have to worry" sent Qwen into lines
       // that never ended.
       final c = controller();
-      await readGood(c);
+      await readPassage(c);
       await answer(c, 4, 'I have to worry about falling.');
       await answer(c, 4, 'Pizza with pineapple, obviously.');
       expect(c.done, isTrue);
@@ -634,7 +851,7 @@ void main() {
 
     test('a voice from the passage needs no word check', () async {
       final c = controller();
-      await readGood(c);
+      await readPassage(c);
       await answer(c, 4, 'Flying, obviously, every single day.');
       c.finishAnswers();
       expect(c.done, isTrue);
@@ -644,7 +861,7 @@ void main() {
     test('fill is full once 15 s are spoken', () async {
       // A saved answer is cut in a pause before 15 s, so Full shows while still talking: the cue to stop.
       final c = controller();
-      await c.skip();
+      await toQuestion(c);
       await c.record();
       await mic.say(seconds(16));
       expect(c.fill, VoiceFill.full);
@@ -652,7 +869,7 @@ void main() {
 
     test('the meter counts the answer while it is being recorded', () async {
       final c = controller();
-      await c.skip();
+      await toQuestion(c);
       await c.record();
       await mic.say(seconds(3));
       expect(c.answerSeconds, closeTo(2.5, 0.3), reason: 'from the first word to the last so far');
@@ -685,7 +902,7 @@ void main() {
   test('answer takes remember their question', () async {
     final c = controller();
     final shown = c.line.text;
-    await readGood(c);
+    await readPassage(c);
     final prompt = c.line.text;
     full.next = () => words('Flying, obviously.');
     await readGood(c);
@@ -698,7 +915,7 @@ void main() {
 
   test('add more avoids the passage and question already used', () async {
     final first = controller();
-    await readGood(first);
+    await readPassage(first);
     final usedPrompt = first.line.text;
     full.next = () => words('Flying, obviously.');
     await readGood(first);
@@ -718,7 +935,7 @@ void main() {
         earlier: earlier,
       );
       expect(c.lines[0].text, isNot(earlier.first.text));
-      expect(c.lines[1].text, isNot(usedPrompt));
+      expect(c.lines.last.text, isNot(usedPrompt));
     }
   });
 
@@ -739,7 +956,7 @@ void main() {
 
   test('answer of 7 s or more builds the reference', () async {
     final c = controller();
-    await readGood(c);
+    await readPassage(c);
     full.next = () => words('Honestly the traffic this morning was ridiculous');
     await c.record();
     await mic.say(longAnswer());
@@ -760,7 +977,7 @@ void main() {
 
   test('skip on the passage still allows a voice from the answer', () async {
     final c = controller();
-    await c.skip();
+    await toQuestion(c);
     full.next = () => words('Honestly the traffic this morning was ridiculous');
     await c.record();
     await mic.say(longAnswer());
@@ -770,7 +987,7 @@ void main() {
 
   test('nothing usable keeps voice not ready', () async {
     final c = controller();
-    await c.skip();
+    await toQuestion(c);
     await c.skip();
     expect(c.done, isTrue);
     expect(await c.finish(), isNull);
@@ -811,7 +1028,7 @@ void main() {
 
   test('finish builds conversational reference and marks person ready', () async {
     final c = controller();
-    await readGood(c);
+    await readPassage(c);
     await readGood(c);
     expect(c.moreAnswers, isTrue, reason: 'one short answer: another question is offered');
     c.finishAnswers();
