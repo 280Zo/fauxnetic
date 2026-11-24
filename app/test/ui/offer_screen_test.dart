@@ -36,7 +36,8 @@ void main() {
 
   testWidgets('after the story: give the voice some feeling, or try the voice', (t) async {
     final events = await pump(t, Offer.feelings);
-    expect(find.text("Give AJ's voice some feeling"), findsOneWidget);
+    expect(find.text("Give AJ's voice some emotion"), findsOneWidget);
+    expect(find.textContaining('feeling'), findsNothing, reason: 'owner, 2026-11-23: emotions, as on the voice screen');
     expect(
       find.text(
         'Say one short sentence five ways: plainly, as a question, excited, annoyed and worried. About a minute.',
@@ -44,8 +45,8 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Then lines can sound excited, annoyed or worried.'), findsOneWidget);
-    expect(find.text('You can add feelings later: on People, tap the mic next to AJ.'), findsOneWidget);
-    await t.tap(find.text('Add feelings'));
+    expect(find.text('You can add emotions later: on People, tap the mic next to AJ.'), findsOneWidget);
+    await t.tap(find.text('Add emotions'));
     await t.tap(find.text("Not now, try AJ's voice"));
     expect(events, ['yes', 'no']);
   });

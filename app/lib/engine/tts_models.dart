@@ -36,7 +36,11 @@ class TtsModel {
   /// The codec/companion passed with set_codec_path, or null when the model has none.
   PinnedModel? get codecFile => files.isEmpty ? kModels.firstWhere((m) => m.role == ModelRole.codec) : codec;
 
-  int get downloadBytes => files.fold(0, (n, f) => n + f.size);
+  /// The files to download for it: its own, or for Qwen the voice set (talker and codec).
+  List<PinnedModel> get downloadFiles => files.isEmpty ? kVoiceModels : files;
+
+  /// Review minor (2026-11-19): Qwen showed "Downloads 0 B".
+  int get downloadBytes => downloadFiles.fold(0, (n, f) => n + f.size);
 
   /// Roughly the free memory it needs to run without Android swapping it out: its weights plus a
   /// quarter for working memory. Null for Qwen, which runs fine on the A54. VoxCPM's 2.8 GB copy

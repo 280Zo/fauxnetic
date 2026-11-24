@@ -41,6 +41,7 @@ void main() {
               ModelInfo(model: m, downloaded: have.contains(m.id), bytes: have.contains(m.id) ? m.downloadBytes : 0),
           ],
           onDefaultModel: (id) async => events.add('default $id'),
+          onWantDefault: (id) async => events.add('want $id'),
           onDeleteModel: (id) async {
             events.add('delete $id');
             have.remove(id);
@@ -195,14 +196,35 @@ void main() {
     await t.tap(find.text('Download'));
     await t.pump();
     await settle(t);
-    expect(events, ['download pocket'], reason: 'not the default until it is here');
+    // Review minor (2026-11-19): the wish lived only in this screen and was lost when it closed;
+    // it's handed on, so the app makes it the default whenever the download finishes.
+    expect(events, ['want pocket', 'download pocket'], reason: 'not the default until it is here');
     stores['pocket-tts-english-q8_0.gguf']!.emit(41000000);
     await settle(t);
     expect(find.textContaining('33%'), findsOneWidget);
     await t.runAsync(() => stores['pocket-tts-english-q8_0.gguf']!.finish());
     await settle(t);
     await settle(t);
-    expect(events, ['download pocket', 'default pocket']);
+    expect(events, ['want pocket', 'download pocket', 'default pocket']);
+  });
+
+  testWidgets('picking another default drops the wish for the one still downloading', (t) async {
+    // Review minor (2026-11-19): the downloading one still took over when it finished.
+    await pump(t);
+    await scrollTo(t, 'Pocket TTS');
+    await t.tap(find.text('Pocket TTS'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Download'));
+    await t.pump();
+    await settle(t);
+    await t.ensureVisible(find.text('VoxCPM 2'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('VoxCPM 2'));
+    await t.pumpAndSettle();
+    await t.runAsync(() => stores['pocket-tts-english-q8_0.gguf']!.finish());
+    await settle(t);
+    await settle(t);
+    expect(events, ['want pocket', 'download pocket', 'default voxcpm']);
   });
 
   testWidgets('a download started elsewhere updates its row when it finishes', (t) async {

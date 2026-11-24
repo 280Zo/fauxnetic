@@ -246,6 +246,65 @@ void main() {
     expect(File('${dir.path}/m.gguf.part').existsSync(), isFalse);
   });
 
+  test('a file already here at its pinned size is not read and hashed again', () async {
+    // Review minor (2026-11-19): every attempt re-hashed ~1 GB of finished files. They arrive only
+    // through a verified rename, so their size is enough (as at app start).
+    final finished = File('${dir.path}/m.gguf')..writeAsBytesSync(List.filled(payload.length, 0));
+    final client = MockClient((request) async => fail('nothing to fetch'));
+    final store = ModelStore(dir, client: client, freeBytes: plenty, models: [pin()]);
+    await store.download().drain<void>();
+    expect(finished.readAsBytesSync().every((b) => b == 0), isTrue, reason: 'left alone');
+  });
+
+  test('launch cleanup deletes partial files of models no longer used, and keeps those in use', () async {
+    // Review minor (2026-11-19): parts of unpinned models were kept forever.
+    final old = File('${dir.path}/old-talker.gguf.part')..writeAsBytesSync([1, 2, 3]);
+    final mine = File('${dir.path}/m.gguf.part')..writeAsBytesSync([1, 2, 3]);
+    await ModelStore(dir, models: [pin()]).removeUnpinned();
+    expect(old.existsSync(), isFalse);
+    expect(mine.existsSync(), isTrue, reason: 'resumes at the next download');
+  });
+
+  test('a resume answered from another byte starts over instead of appending', () async {
+    // Review minor (2026-11-19): a 206 wasn't checked against Content-Range.
+    File('${dir.path}/m.gguf.part').writeAsBytesSync(payload.sublist(0, 2000));
+    final client = MockClient.streaming(
+      (request, body) async => http.StreamedResponse(
+        Stream.value(payload),
+        206,
+        headers: {'content-range': 'bytes 0-${payload.length - 1}/${payload.length}'},
+      ),
+    );
+    final store = ModelStore(dir, client: client, freeBytes: plenty, models: [pin()]);
+    await store.download().drain<void>();
+    expect(await store.path(pin()).readAsBytes(), payload);
+  });
+
+  test('a part longer than the model starts over', () async {
+    File('${dir.path}/m.gguf.part').writeAsBytesSync(List.filled(payload.length + 100, 7));
+    final client = MockClient.streaming((request, body) async {
+      expect(request.headers.containsKey('range'), isFalse, reason: 'from the start');
+      return http.StreamedResponse(Stream.value(payload), 200);
+    });
+    final store = ModelStore(dir, client: client, freeBytes: plenty, models: [pin()]);
+    await store.download().drain<void>();
+    expect(await store.path(pin()).readAsBytes(), payload);
+  });
+
+  test('model stores share one network client', () {
+    expect(identical(ModelStore(dir).client, ModelStore(dir).client), isTrue);
+  });
+
+  test('a part already complete is reported as done, so the bar never drops', () async {
+    // Review minor (2026-11-19): it was renamed without a progress event.
+    File('${dir.path}/m.gguf.part').writeAsBytesSync(payload);
+    final client = MockClient((request) async => fail('nothing to fetch'));
+    final store = ModelStore(dir, client: client, freeBytes: plenty, models: [pin()]);
+    final events = await store.download().toList();
+    expect(events.map((e) => (e.model, e.received, e.total)), [('m.gguf', payload.length, payload.length)]);
+    expect(store.path(pin()).existsSync(), isTrue);
+  });
+
   test('a cancelled download keeps its part', () async {
     final c = StreamController<List<int>>();
     final client = MockClient.streaming((request, body) async {

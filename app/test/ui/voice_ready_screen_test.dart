@@ -40,6 +40,8 @@ void main() {
   testWidgets('three parts, with what is done and what is not', (t) async {
     await pump(t);
     expect(find.text("Sam's voice"), findsOneWidget);
+    expect(find.text('Emotions'), findsOneWidget, reason: 'owner, 2026-11-23: Emotions, not Feelings');
+    expect(find.text('Feelings'), findsNothing);
     expect(find.text('Main voice'), findsOneWidget);
     expect(find.text('Ready · Record again'), findsOneWidget);
     expect(find.text('Not yet · makes it sound more like Sam'), findsOneWidget);
@@ -56,7 +58,7 @@ void main() {
     await pump(t);
     await t.tap(find.text('Main voice'));
     await t.tap(find.text('Story'));
-    await t.tap(find.text('Feelings'));
+    await t.tap(find.text('Emotions'));
     await t.tap(find.text("Try Sam's voice"));
     expect(events, ['main', 'story', 'feelings', 'typing']);
   });

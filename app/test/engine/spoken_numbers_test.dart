@@ -33,11 +33,28 @@ void main() {
     'the 1st, 2nd, 3rd and 4th': 'the first, second, third and fourth',
     'my 21st birthday': 'my twenty-first birthday',
     'pi is 3.14159': 'pi is three point one four one five nine',
-    '\$1,000,000,000,000': 'one zero zero zero zero zero zero zero zero zero zero zero zero dollars',
-    'about 123456789012345678901234': 'about one two three four five six seven eight nine zero one two three four five six seven eight nine zero one two three four',
+    // Long digit runs are said in groups, with a pause between (2026-11-23): one unbroken chain of
+    // 10 or 16 digits is hard to follow and gives the model nowhere to breathe.
+    '\$1,000,000,000,000': 'one zero zero, zero zero zero, zero zero zero, zero zero zero zero dollars',
+    'about 123456789012345678901234': 'about one two three four, five six seven eight, nine zero one two, three four five six, seven eight nine zero, one two three four',
+    'My card is 4532718902635547.':
+        'My card is four five three two, seven one eight nine, zero two six three, five five four seven.',
+    'Call 5558675309 now': 'Call five five five, eight six seven, five three zero nine now',
+    'Order 1234567': 'Order one two three, four five six seven',
+    'Call 555 8675309': 'Call five five five, eight six seven, five three zero nine',
+    'PIN 123456': 'PIN one two three, four five six',
   };
 
   for (final MapEntry(key: input, value: output) in cases.entries) {
     test('"$input"', () => expect(spokenNumbers(input), output));
   }
+
+  test('every long run is said whole, in order, in groups of three or four', () {
+    for (var n = 6; n <= 40; n++) {
+      final digits = List.generate(n, (i) => '${(i * 7 + 3) % 10}').join();
+      final groups = spokenNumbers(digits).split(', ');
+      expect(groups.map((g) => g.split(' ').length), everyElement(inInclusiveRange(3, 4)), reason: '$n digits');
+      expect(groups.join(' '), spokenNumbers(digits.split('').join(' ')), reason: '$n digits, every one in order');
+    }
+  });
 }

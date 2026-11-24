@@ -8,6 +8,7 @@ import '../cues/cue.dart';
 import '../engine/voice_engine.dart';
 import '../engine/tts_models.dart';
 import '../models/download_center.dart';
+import '../models/model_store.dart' show formatSize;
 import '../recording/scripts.dart';
 import '../storage/storage_report.dart';
 import '../theme.dart';
@@ -238,9 +239,31 @@ class _ModelPicker extends StatelessWidget {
     if (!await c.modelReady(id)) {
       // 2026-11-18: it downloads in the background; it can be picked once it is here.
       final j = c.downloadOf(id);
-      if (!context.mounted || (j != null && j.pending)) return;
       final m = ttsModel(id);
+      // Waiting for Wi-Fi: asks before letting it use mobile data.
+      if (j?.state == JobState.waitingWifi && context.mounted) {
+        final ok = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: Text('Use mobile data for ${m.label}?'),
+            content: Text('About ${formatSize(j!.left)} is left to download. Your data plan may charge for it.'),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Wait for Wi-Fi')),
+              TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Use mobile data')),
+            ],
+          ),
+        );
+        if (ok == true) c.allowMobileData(id);
+        return;
+      }
+      if (!context.mounted || (j != null && j.pending)) return;
       final messenger = ScaffoldMessenger.of(context);
+      // A failed download was agreed to already: it is just tried again.
+      if (j?.state == JobState.failed) {
+        await c.startDownload(id);
+        messenger.showSnackBar(SnackBar(content: Text('Trying ${m.label} again')));
+        return;
+      }
       if (!await confirmDownload(context, m)) return;
       await c.startDownload(id);
       messenger.showSnackBar(SnackBar(content: Text('Downloading ${m.label} in the background')));
@@ -248,8 +271,22 @@ class _ModelPicker extends StatelessWidget {
     }
     if (!context.mounted || !await _enoughMemory(context, ttsModel(id))) return;
     if (!context.mounted) return;
-    final got = await showModelLoading(context, c, id);
-    if (got != null) await c.setModel(got);
+    // Chosen at once for new lines, with no loading screen (owner, 2026-11-23: with lines queued it
+    // sat there until the line being made finished). With nothing waiting it loads quietly now, so
+    // the next line starts sooner; otherwise the queue loads it when its first line comes up. A
+    // failure shows on that line.
+    final messenger = ScaffoldMessenger.of(context);
+    final busy = c.items.any((i) => i.status == CueStatus.queued || i.status == CueStatus.preparing);
+    await c.setModel(id);
+    if (busy) {
+      messenger.showSnackBar(SnackBar(content: Text('New lines will use ${ttsModel(id).label}')));
+      return;
+    }
+    try {
+      await c.loadModel(id);
+    } on EngineError {
+      // The first line reports it.
+    }
   }
 
   /// A model bigger than the memory free right now makes Android swap and lines crawl (VoxCPM:
@@ -291,15 +328,7 @@ class _ModelPicker extends StatelessWidget {
         PopupMenuButton<String>(
           tooltip: 'Choose the voice model',
           onSelected: (id) => _pick(context, id),
-          itemBuilder: (_) => [
-            for (final m in kTtsModels)
-              CheckedPopupMenuItem(
-                value: m.id,
-                checked: m.id == controller.modelId,
-                enabled: !(controller.downloadOf(m.id)?.pending ?? false),
-                child: Text(_pickerLabel(m, controller.downloadOf(m.id))),
-              ),
-          ],
+          itemBuilder: (_) => [for (final m in kTtsModels) _menuItem(context, m)],
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -311,115 +340,44 @@ class _ModelPicker extends StatelessWidget {
       ],
     );
   }
-}
 
-/// "Pocket TTS · 34%" or "· waiting for Wi-Fi" while a model downloads in the background.
-String _pickerLabel(TtsModel m, DownloadJob? j) {
-  if (j == null || !j.pending) return m.label;
-  return switch (j.state) {
-    JobState.waitingWifi => '${m.label} · waiting for Wi-Fi',
-    JobState.waitingNetwork => '${m.label} · waiting for a connection',
-    _ => '${m.label} · ${j.received * 100 ~/ (j.total == 0 ? 1 : j.total)}%',
-  };
-}
-
-/// Loads [id] behind a loading screen ("Loading VoxCPM 2… 0:12", Cancel). Returns the model to
-/// use: [id] once loaded, Qwen if the owner takes that offer after a failure, or null (cancelled or
-/// closed: keep the current one).
-Future<String?> showModelLoading(BuildContext context, SpeakController c, String id) => showDialog<String?>(
-  context: context,
-  barrierDismissible: false,
-  builder: (_) => _LoadingDialog(controller: c, model: ttsModel(id)),
-);
-
-class _LoadingDialog extends StatefulWidget {
-  const _LoadingDialog({required this.controller, required this.model});
-  final SpeakController controller;
-  final TtsModel model;
-
-  @override
-  State<_LoadingDialog> createState() => _LoadingDialogState();
-}
-
-class _LoadingDialogState extends State<_LoadingDialog> {
-  var _seconds = 0;
-  late final Timer _tick;
-  EngineError? _error;
-  var _done = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _tick = Timer.periodic(const Duration(seconds: 1), (_) => setState(() => _seconds++));
-    widget.controller
-        .loadModel(widget.model.id)
-        .then(
-          (_) => _close(widget.model.id),
-          onError: (Object e) {
-            if (e is EngineError && e.kind != EngineErrorKind.cancelled) {
-              if (mounted) setState(() => _error = e);
-              _tick.cancel();
-            } else {
-              _close(null);
-            }
-          },
-        );
-  }
-
-  void _close(String? result) {
-    if (_done || !mounted) return;
-    _done = true;
-    Navigator.pop(context, result);
-  }
-
-  @override
-  void dispose() {
-    _tick.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final m = widget.model;
-    final e = _error;
-    if (e != null) {
-      final fallback = kTtsModels.first;
-      return AlertDialog(
-        title: Text("Couldn't load ${m.label}"),
-        content: Text(
-          e.kind == EngineErrorKind.outOfMemory
-              ? "There's not enough free memory for ${m.label} right now. Close other apps and try again"
-                    '${m.id == fallback.id ? '.' : ', or use ${fallback.label}.'}'
-              : e.message,
-        ),
-        actions: [
-          if (m.id != fallback.id)
-            TextButton(onPressed: () => _close(fallback.id), child: Text('Use ${fallback.label}')),
-          TextButton(onPressed: () => _close(null), child: const Text('Close')),
-        ],
-      );
-    }
-    final s = _seconds;
-    return AlertDialog(
-      title: Text('Loading ${m.label}…'),
-      content: Row(
+  /// A model in the menu, with a second line when there's something to know (owner-approved mockup,
+  /// 2026-11-23): not downloaded (its size), downloading (can't be picked yet), waiting for Wi-Fi in
+  /// amber (tap: use mobile data), failed in coral (tap: try again).
+  PopupMenuItem<String> _menuItem(BuildContext context, TtsModel m) {
+    final colors = context.colors;
+    final j = controller.downloadOf(m.id);
+    final (String? line, Color? color, bool enabled) = switch (j?.state) {
+      JobState.failed => ('Download failed · tap to try again', colors.failed, true),
+      JobState.waitingWifi => ('Waiting for Wi-Fi · tap to use mobile data', colors.making, true),
+      JobState.waitingNetwork => ('Waiting for a connection', colors.soft, false),
+      JobState.queued ||
+      JobState.downloading => ('Downloading ${j!.received * 100 ~/ (j.total == 0 ? 1 : j.total)}%', colors.soft, false),
+      _ =>
+        controller.onPhone(m.id)
+            ? (null, null, true)
+            : ('Not downloaded · ${formatSize(m.downloadBytes)}', colors.soft, true),
+    };
+    return CheckedPopupMenuItem(
+      value: m.id,
+      checked: m.id == controller.modelId,
+      enabled: enabled,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 3)),
-          const SizedBox(width: 16),
-          Text('${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}', style: TextStyle(color: context.colors.muted)),
+          Text(m.label),
+          if (line != null)
+            Text(
+              line,
+              style: TextStyle(
+                color: color,
+                fontSize: 13.5,
+                fontWeight: color == colors.failed || color == colors.making ? FontWeight.w700 : FontWeight.w400,
+              ),
+            ),
         ],
       ),
-      // Closes at once and keeps the current model, even when the load can't stop yet (it waits for a
-      // line being made); a load that finishes later is ignored (owner, 2026-11-17).
-      actions: [
-        TextButton(
-          onPressed: () {
-            unawaited(widget.controller.cancelLoad());
-            _close(null);
-          },
-          child: const Text('Cancel'),
-        ),
-      ],
     );
   }
 }

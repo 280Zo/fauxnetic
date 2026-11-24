@@ -144,6 +144,7 @@ class Flows {
         onDefaultModel: s.setDefaultModel,
         onDeleteModel: s.deleteModel,
         startDownload: s.startModelDownload,
+        onWantDefault: s.wantDefault,
         downloads: s.downloads,
       ),
     ),

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../cues/preparer.dart';
+import '../engine/tts_models.dart';
 import '../platform/network.dart';
 import 'keep_alive.dart';
 import 'model_store.dart';
@@ -74,6 +75,19 @@ class DownloadCenter extends ChangeNotifier {
     onEnqueue?.call(id);
     notifyListeners();
     await _pump();
+  }
+
+  /// The name the voice set's download goes by (as the first launch queues it).
+  static const kVoiceModelLabel = 'Voice model';
+
+  /// Downloads [m] in the background, or tries its failed download again (review minor,
+  /// 2026-11-19: picking a failed model added nothing). Qwen's download is the voice set.
+  Future<void> fetchModel(TtsModel m) async {
+    if (job(m.id)?.state == JobState.failed) {
+      retry(m.id);
+      return;
+    }
+    await enqueue(m.id, m.files.isEmpty ? kVoiceModelLabel : m.label, m.downloadFiles);
   }
 
   void allowMobileData(String id) {
@@ -177,7 +191,7 @@ class DownloadCenter extends ChangeNotifier {
             file = p.model;
             fileSize = p.total;
             j.received = done + p.received;
-            notifyListeners();
+            _progressed();
           },
           onError: (Object e) {
             _end(j);
@@ -213,6 +227,29 @@ class DownloadCenter extends ChangeNotifier {
     _watch = Timer.periodic(poll, (_) => unawaited(_check(j)));
   }
 
+  /// Progress redraws listeners (the People bar, Settings rows, the Speak screen) at most every
+  /// [_progressEvery], and once more after the last chunk so the final value shows (review minor,
+  /// 2026-11-19: every network chunk redrew them).
+  void _progressed() {
+    final since = DateTime.now().difference(_lastProgress);
+    if (since >= _progressEvery) {
+      _trailing?.cancel();
+      _trailing = null;
+      _lastProgress = DateTime.now();
+      notifyListeners();
+      return;
+    }
+    _trailing ??= Timer(_progressEvery - since, () {
+      _trailing = null;
+      _lastProgress = DateTime.now();
+      if (!_disposed) notifyListeners();
+    });
+  }
+
+  static const _progressEvery = Duration(milliseconds: 100);
+  var _lastProgress = DateTime(0);
+  Timer? _trailing;
+
   void _end(DownloadJob j) {
     if (_active != j) return;
     _watch?.cancel();
@@ -237,6 +274,7 @@ class DownloadCenter extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _wait?.cancel();
+    _trailing?.cancel();
     unawaited(_stop());
     super.dispose();
   }

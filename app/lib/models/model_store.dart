@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:ffi/ffi.dart';
 import 'package:http/http.dart' as http;
 
@@ -123,7 +124,7 @@ class ModelStore {
     Future<int> Function()? freeBytes,
     List<PinnedModel>? models,
     this.stallTimeout = const Duration(seconds: 30),
-  }) : _client = client ?? http.Client(),
+  }) : _client = client ?? _sharedClient,
        _freeBytes = freeBytes ?? (() async => freeBytesAt(dir.path)),
        models = models ?? kModels;
 
@@ -134,6 +135,13 @@ class ModelStore {
   final Duration stallTimeout;
   final http.Client _client;
   final Future<int> Function() _freeBytes;
+
+  /// One client for every store: stores are made per check (is a model here?), and a client each
+  /// was never closed (review minor, 2026-11-19).
+  static final _sharedClient = http.Client();
+
+  @visibleForTesting
+  http.Client get client => _client;
 
   File path(PinnedModel m) => File('${dir.path}/${m.name}');
 
@@ -150,8 +158,10 @@ class ModelStore {
     var n = 0;
     await for (final e in dir.list()) {
       final name = e.uri.pathSegments.last;
-      // Partial downloads resume; dot files (the list of wanted downloads) are the app's own.
-      if (e is File && !pinned.contains(name) && !name.endsWith('.part') && !name.startsWith('.')) {
+      // Partial downloads of models in use resume; dot files (the list of wanted downloads) are the
+      // app's own. A part of a model no longer used goes too (review minor, 2026-11-19).
+      final base = name.endsWith('.part') ? name.substring(0, name.length - '.part'.length) : name;
+      if (e is File && !pinned.contains(base) && !name.startsWith('.')) {
         await e.delete();
         n++;
       }
@@ -232,10 +242,9 @@ class ModelStore {
 
   Future<void> _downloadAll(void Function(DownloadProgress) emit, _Cancel cancel) async {
     await dir.create(recursive: true);
-    final missing = <PinnedModel>[];
-    for (final m in models) {
-      if (!await _verified(path(m), m)) missing.add(m);
-    }
+    // Finished files arrive only through a verified rename, so their size is enough here; hashing
+    // them again on every attempt read ~1 GB (review minor, 2026-11-19).
+    final missing = await this.missing();
     var already = 0;
     for (final m in missing) {
       final part = File('${path(m).path}.part');
@@ -253,6 +262,8 @@ class ModelStore {
       if (await part.exists() && await part.length() >= m.size) {
         if (await part.length() == m.size && await _verified(part, m)) {
           await part.rename(path(m).path);
+          // Reported as arrived, so a progress bar counting it doesn't drop back.
+          emit(DownloadProgress(m.name, m.size, m.size));
           continue;
         }
         await part.delete();
@@ -281,8 +292,21 @@ class ModelStore {
         unawaited(response.stream.listen((_) {}).cancel());
         throw const _Cancelled();
       }
-      resumed = have > 0 && response.statusCode == 206;
-      if (response.statusCode != 200 && !resumed) {
+      // A 206 counts as resumed only if it starts where the part ends; one from byte 0 is the
+      // whole file (written fresh), and one from anywhere else can't be trusted (review minor).
+      // No Content-Range at all (against the standard) is trusted, as before.
+      final from = response.statusCode == 206 ? _rangeStart(response.headers['content-range']) ?? have : null;
+      resumed = have > 0 && response.statusCode == 206 && from == have;
+      final whole = response.statusCode == 200 || (response.statusCode == 206 && from == 0);
+      if (response.statusCode == 206 && !resumed && !whole) {
+        unawaited(response.stream.listen((_) {}).cancel());
+        keepPart = false;
+        throw ModelStoreError(
+          'The download server sent the wrong part of ${m.name}. It will start over.',
+          kind: ModelErrorKind.network,
+        );
+      }
+      if (!whole && !resumed) {
         final status = response.statusCode;
         unawaited(response.stream.listen((_) {}).cancel());
         // Busy or a server error: wait and try again, keeping what arrived. 416 means the part
@@ -360,6 +384,12 @@ class ModelStore {
     } finally {
       if (!done) await _discard(sink, part, keep: keepPart);
     }
+  }
+
+  /// The first byte of a "bytes START-END/TOTAL" Content-Range; null when missing or unreadable.
+  static int? _rangeStart(String? header) {
+    final m = RegExp(r'^bytes (\d+)-').firstMatch(header?.trim() ?? '');
+    return m == null ? null : int.tryParse(m[1]!);
   }
 
   Future<void> _discard(IOSink? sink, File part, {bool keep = false}) async {

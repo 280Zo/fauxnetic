@@ -88,7 +88,7 @@ class VoiceReadyScreen extends StatelessWidget {
               const SizedBox(height: 16),
               part('Main voice', person.ready, 'Record again', onMainAgain),
               part('Story', storyDone, storyDone ? 'Read another story' : 'makes it sound more like $name', onStory),
-              part('Feelings', _felt, _felt ? 'Record again' : 'excited, annoyed, worried', onFeelings),
+              part('Emotions', _felt, _felt ? 'Record again' : 'excited, annoyed, worried', onFeelings),
               const Spacer(),
               FilledButton(
                 onPressed: onStartTyping,

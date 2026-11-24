@@ -29,11 +29,16 @@ class ModelsSection extends StatefulWidget {
     required this.onDelete,
     required this.startDownload,
     this.downloads,
+    this.onWantDefault,
   });
 
   final String initialDefault;
   final Future<List<ModelInfo>> Function() models;
   final Future<void> Function(String id) onDefault;
+
+  /// A model picked while not downloaded: the app makes it the default when its download is
+  /// done, even after Settings closes (review minor, 2026-11-19).
+  final Future<void> Function(String id)? onWantDefault;
   final Future<void> Function(String id) onDelete;
   final Future<void> Function(String id) startDownload;
   final DownloadCenter? downloads;
@@ -96,9 +101,12 @@ class _ModelsSectionState extends State<ModelsSection> {
       if (widget.downloads?.job(i.model.id)?.pending ?? false) return;
       if (!await confirmDownload(context, i.model)) return;
       _wanted = i.model.id;
+      await widget.onWantDefault?.call(i.model.id);
       await widget.startDownload(i.model.id);
       return;
     }
+    // Another pick replaces the wish for one still downloading.
+    _wanted = null;
     await widget.onDefault(i.model.id);
     if (!mounted) return;
     setState(() => _default = i.model.id);

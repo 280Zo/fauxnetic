@@ -30,7 +30,12 @@ class SettingsScreen extends StatefulWidget {
     required this.startDownload,
     required this.onReport,
     this.downloads,
+    this.onWantDefault,
   });
+
+  /// A model picked while not downloaded becomes the default once it is here, even after
+  /// Settings closes.
+  final Future<void> Function(String id)? onWantDefault;
 
   /// Opens an email draft reporting a generated line; false when there is no email app.
   final Future<bool> Function() onReport;
@@ -221,6 +226,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               },
               startDownload: widget.startDownload,
               downloads: widget.downloads,
+              onWantDefault: widget.onWantDefault,
             ),
             _heading('Storage'),
             _row('Voice models', st == null ? '…' : formatBytes(st.models)),

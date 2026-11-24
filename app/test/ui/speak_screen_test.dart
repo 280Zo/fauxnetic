@@ -144,6 +144,10 @@ class FakeSpeakController extends SpeakController {
   DownloadJob? downloadOf(String id) => jobs[id];
   @override
   Future<void> startDownload(String id) async => modelEvents.add('download $id');
+  @override
+  void allowMobileData(String id) => modelEvents.add('mobile $id');
+  @override
+  bool onPhone(String id) => ready.contains(id);
 
   @override
   Future<void> setModel(String id) async {
@@ -442,7 +446,7 @@ void main() {
       await t.pumpAndSettle();
       await t.tap(find.text('VoxCPM 2').last);
       await t.pumpAndSettle();
-      expect(c.modelEvents, ['load voxcpm', 'model voxcpm']);
+      expect(c.modelEvents, ['model voxcpm', 'load voxcpm']);
       expect(c.retriedIds, isEmpty, reason: 'picking does not re-generate by itself');
     });
 
@@ -668,6 +672,40 @@ void main() {
     expect(find.byType(LinearProgressIndicator), findsNothing, reason: 'no blocking download dialog');
   });
 
+  testWidgets('picking a model whose download failed tries it again, without asking', (t) async {
+    // Review minor (2026-11-19): it asked again, then nothing happened while it said "Downloading…".
+    final c = await pump(t);
+    c.jobs['pocket'] = DownloadJob('pocket', 'Pocket TTS', const [], 100)..state = JobState.failed;
+    await t.tap(find.text('Qwen3-TTS'));
+    await t.pumpAndSettle();
+    await t.tap(find.textContaining('Pocket TTS').last);
+    await t.pumpAndSettle();
+    expect(find.text('Download'), findsNothing, reason: 'no dialog: it was already agreed to');
+    expect(c.modelEvents, ['download pocket']);
+    expect(find.text('Trying Pocket TTS again'), findsOneWidget);
+  });
+
+  // Owner-approved mockup (2026-11-23): each model in the menu says what's going on with it.
+  testWidgets('the model menu says what is going on with each download, in color', (t) async {
+    final c = await pump(t);
+    c.jobs['pocket'] = DownloadJob('pocket', 'Pocket TTS', const [], 100)..state = JobState.failed;
+    c.jobs['voxcpm-small'] = DownloadJob('voxcpm-small', 'VoxCPM 2 (small)', const [], 100)
+      ..state = JobState.waitingWifi;
+    await t.tap(find.text('Qwen3-TTS'));
+    await t.pumpAndSettle();
+    const colors = FauxneticColors.light;
+    Color? colorOf(String s) => t.widget<Text>(find.text(s)).style?.color;
+    expect(colorOf('Download failed · tap to try again'), colors.failed);
+    expect(colorOf('Waiting for Wi-Fi · tap to use mobile data'), colors.making);
+    expect(find.text('Not downloaded · 2.8 GB'), findsOneWidget, reason: 'VoxCPM 2');
+    await t.tap(find.text('Waiting for Wi-Fi · tap to use mobile data'));
+    await t.pumpAndSettle();
+    expect(find.textContaining('mobile data'), findsWidgets);
+    await t.tap(find.text('Use mobile data'));
+    await t.pumpAndSettle();
+    expect(c.modelEvents, ['mobile voxcpm-small']);
+  });
+
   testWidgets('a downloading model shows its progress and cannot be picked', (t) async {
     final c = await pump(t);
     c.jobs['pocket'] = DownloadJob('pocket', 'Pocket TTS', const [], 100)
@@ -675,8 +713,8 @@ void main() {
       ..received = 34;
     await t.tap(find.text('Qwen3-TTS'));
     await t.pumpAndSettle();
-    expect(find.text('Pocket TTS · 34%'), findsOneWidget);
-    await t.tap(find.text('Pocket TTS · 34%'));
+    expect(find.text('Downloading 34%'), findsOneWidget);
+    await t.tap(find.text('Downloading 34%'));
     await t.pumpAndSettle();
     expect(c.modelEvents, isEmpty);
     expect(c.modelId, 'qwen');
@@ -702,7 +740,7 @@ void main() {
     await t.pumpAndSettle();
     await t.tap(find.text('Use anyway'));
     await t.pumpAndSettle();
-    expect(c.modelEvents, ['load voxcpm', 'model voxcpm']);
+    expect(c.modelEvents, ['model voxcpm', 'load voxcpm']);
   });
 
   testWidgets('enough free memory: no warning', (t) async {
@@ -713,10 +751,12 @@ void main() {
     await t.pumpAndSettle();
     await t.tap(find.text('VoxCPM 2').last);
     await t.pumpAndSettle();
-    expect(c.modelEvents, ['load voxcpm', 'model voxcpm']);
+    expect(c.modelEvents, ['model voxcpm', 'load voxcpm']);
   });
 
-  testWidgets('picking a downloaded model loads it behind a loading screen, then switches', (t) async {
+  // Owner, 2026-11-23: with lines queued, picking a model sat on a loading screen for a long time
+  // (the load waited for the line being made). Now it is chosen at once, with no loading screen.
+  testWidgets('picking a downloaded model switches at once and loads it quietly when nothing waits', (t) async {
     final c = await pump(t);
     c.ready.add('voxcpm');
     c.loading = Completer<void>();
@@ -725,52 +765,29 @@ void main() {
     await t.tap(find.text('VoxCPM 2').last);
     await t.pump();
     await t.pump(const Duration(milliseconds: 300));
-    expect(find.text('Loading VoxCPM 2…'), findsOneWidget);
-    expect(find.text('0:00'), findsOneWidget);
-    await t.pump(const Duration(seconds: 2));
-    expect(find.text('0:02'), findsOneWidget, reason: 'the clock ticks');
-    expect(c.modelEvents, ['load voxcpm'], reason: 'not switched until it is loaded');
+    expect(find.text('Loading VoxCPM 2…'), findsNothing);
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(c.modelId, 'voxcpm');
+    expect(c.modelEvents, ['model voxcpm', 'load voxcpm'], reason: 'warmed up in the background');
     c.loading!.complete();
     await t.pumpAndSettle();
-    expect(find.text('Loading VoxCPM 2…'), findsNothing);
-    expect(c.modelEvents, ['load voxcpm', 'model voxcpm']);
   });
 
-  testWidgets('cancel on the loading screen keeps the old model', (t) async {
+  testWidgets('with lines waiting, picking a model only chooses it; it loads when its line comes up', (t) async {
     final c = await pump(t);
     c.ready.add('voxcpm');
-    c.loading = Completer<void>();
+    c.setItems([cue('a', CueStatus.preparing, 'Being made.'), cue('b', CueStatus.queued, 'Waiting.')]);
+    await t.pump();
     await t.tap(find.text('Qwen3-TTS'));
     await t.pumpAndSettle();
     await t.tap(find.text('VoxCPM 2').last);
-    await t.pump(const Duration(milliseconds: 300));
-    await t.tap(find.text('Cancel'));
     await t.pumpAndSettle();
-    expect(c.modelEvents, ['load voxcpm', 'cancel']);
-    expect(c.modelId, 'qwen');
-    expect(find.text('Loading VoxCPM 2…'), findsNothing);
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(c.modelEvents, ['model voxcpm'], reason: 'no load now: the engine is busy with the queue');
+    expect(find.text('New lines will use VoxCPM 2'), findsOneWidget);
   });
 
-  testWidgets('cancel closes the loading screen at once, even when the load can\'t stop', (t) async {
-    // Owner, 2026-11-17: Cancel did nothing while VoxCPM was loading behind a line.
-    final c = await pump(t);
-    c.ready.add('voxcpm');
-    c.loading = Completer<void>();
-    c.cancelIgnored = true;
-    await t.tap(find.text('Qwen3-TTS'));
-    await t.pumpAndSettle();
-    await t.tap(find.text('VoxCPM 2').last);
-    await t.pump(const Duration(milliseconds: 300));
-    await t.tap(find.text('Cancel'));
-    await t.pumpAndSettle();
-    expect(find.text('Loading VoxCPM 2…'), findsNothing);
-    expect(c.modelId, 'qwen');
-    c.loading!.complete();
-    await t.pumpAndSettle();
-    expect(c.modelId, 'qwen', reason: 'a load that finishes after Cancel does not switch the model');
-  });
-
-  testWidgets('running out of memory while loading offers Qwen', (t) async {
+  testWidgets('a quiet load that fails is left to the first line to report', (t) async {
     final c = await pump(t);
     c.ready.add('voxcpm');
     c.loading = Completer<void>()
@@ -780,11 +797,8 @@ void main() {
     await t.pumpAndSettle();
     await t.tap(find.text('VoxCPM 2').last);
     await t.pumpAndSettle();
-    expect(find.textContaining('not enough free memory'), findsOneWidget);
-    await t.tap(find.text('Use Qwen3-TTS'));
-    await t.pumpAndSettle();
-    expect(c.modelEvents.last, 'model qwen');
-    expect(c.modelId, 'qwen');
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(c.modelId, 'voxcpm');
   });
 
   testWidgets('opening a voice loads its model quietly, with no loading screen', (t) async {

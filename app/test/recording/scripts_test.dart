@@ -147,7 +147,9 @@ void main() {
   String bare(String s) => s.toLowerCase().replaceAll(RegExp(r'[^a-z ]'), '');
 
   test('each sentence set is one sentence said five ways, each with its scene', () {
-    expect(kPhraseSets, hasLength(4));
+    // Owner, 2026-11-23: a dozen or more, picked at random each time.
+    expect(kPhraseSets.length, greaterThanOrEqualTo(12));
+    expect({for (final s in kPhraseSets) bare(s.first.text)}, hasLength(kPhraseSets.length), reason: 'all different');
     for (final set in kPhraseSets) {
       expect([for (final l in set) l.phrase], PhraseTone.values);
       expect({for (final l in set) bare(l.text)}, hasLength(1), reason: 'the same words: ${set.first.text}');
@@ -184,8 +186,12 @@ void main() {
     expect(kPhraseSets, contains(pickPhraseSet(Random(1))));
     final earlier = [for (final l in kPhraseSets[0]) phraseTake(l), for (final l in kPhraseSets[1]) phraseTake(l)];
     for (var s = 0; s < 30; s++) {
-      expect([kPhraseSets[2], kPhraseSets[3]], contains(pickPhraseSet(Random(s), earlier: earlier)));
+      final set = pickPhraseSet(Random(s), earlier: earlier);
+      expect(set, isNot(kPhraseSets[0]));
+      expect(set, isNot(kPhraseSets[1]));
     }
+    final firsts = {for (var s = 0; s < 60; s++) pickPhraseSet(Random(s)).first.text};
+    expect(firsts.length, greaterThan(8), reason: 'a different one most times');
   });
 
   test('resuming keeps the passage already read', () {

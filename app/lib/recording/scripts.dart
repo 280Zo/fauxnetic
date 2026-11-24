@@ -43,8 +43,119 @@ enum PhraseTone {
   final Mood? mood;
 }
 
-/// One sentence said five ways, each after a scene that sets it up. A session uses one set.
-const kPhraseSets = [
+/// One sentence said five ways, each after a scene that sets it up. An emotions session uses one
+/// set, picked at random among those the voice has used least (owner, 2026-11-23: a dozen or more).
+final List<List<ScriptLine>> kPhraseSets = [..._firstSets, ..._moreSets];
+
+/// [words] said each way: plainly, as a question, excited, annoyed and worried, each after its scene.
+List<ScriptLine> _said(String words, String plain, String question, String excited, String annoyed, String worried) => [
+  ScriptLine('$words.', scene: plain, phrase: PhraseTone.plain),
+  ScriptLine('$words?', scene: question, phrase: PhraseTone.question),
+  ScriptLine('$words!', scene: excited, phrase: PhraseTone.excited),
+  ScriptLine('$words.', scene: annoyed, phrase: PhraseTone.annoyed),
+  ScriptLine('$words...', scene: worried, phrase: PhraseTone.worried),
+];
+
+final _moreSets = [
+  _said(
+    'Your sister is getting married',
+    'Passing on the news to a friend',
+    'You just heard a rumor and want to be sure. Ask',
+    "You've been hoping for this for years",
+    'You found out from a stranger, not from her',
+    'She only met him a month ago',
+  ),
+  _said(
+    'The power is out again',
+    'Telling your housemate as they walk in',
+    'You just woke up in the dark. Ask',
+    'You finally get to light all the candles you bought',
+    "It's the third time this week",
+    "Grandpa's oxygen machine runs on it",
+  ),
+  _said(
+    "We're moving to a new city",
+    'Telling your neighbor the plan',
+    'Your parents just announced it at dinner. Ask',
+    "You've dreamed of living there forever",
+    'You only just finished unpacking from the last move',
+    "You don't know a single person there",
+  ),
+  _said(
+    'He kept the dog',
+    'Telling a friend how the adoption went',
+    'You were sure he would give it back. Ask',
+    "You've been begging him to keep it",
+    'It chewed up your new shoes yesterday',
+    "His apartment doesn't allow pets",
+  ),
+  _said(
+    'The test is tomorrow morning',
+    'Reminding your study partner',
+    'You thought it was next week. Ask',
+    "You've studied all month and feel ready",
+    'The teacher moved it without telling anyone',
+    "You haven't even opened the book",
+  ),
+  _said(
+    'They sold out of tickets',
+    'Reading what the website says',
+    "A friend just told you, and you're surprised. Ask",
+    "It's your band's first sold-out show",
+    'You were next in line',
+    'You promised your kid you would get them',
+  ),
+  _said(
+    "She's driving here tonight",
+    'Telling the family the plan',
+    'You thought she was flying. Ask',
+    "You haven't seen her in a year",
+    "She didn't ask if it was okay",
+    "There's ice all over the highway",
+  ),
+  _said(
+    'You finished the whole cake',
+    'Noticing the empty plate',
+    "You can't believe one person ate it all. Ask",
+    'You baked it, and they loved it',
+    'It was for the party tonight',
+    'It had walnuts, and they might be allergic',
+  ),
+  _said(
+    'The boss wants to see us',
+    'Passing on the message',
+    "A coworker just told you, and you're surprised. Ask",
+    "You're sure it's about the promotion",
+    "It's five minutes before you were leaving",
+    "There's been talk of layoffs all week",
+  ),
+  _said(
+    "It's snowing outside right now",
+    'Looking out the window in the morning',
+    'You thought spring had started. Ask',
+    "It's the first snow of the year, and you love it",
+    'You just washed the car',
+    'Your kid walked to school without a coat',
+  ),
+  _said(
+    'We won the raffle',
+    'Reading the email out loud',
+    'You never win anything. Ask',
+    'The prize is a trip to the beach',
+    'The prize is a giant, ugly statue',
+    'The prize is a pony, and you live in an apartment',
+  ),
+  _said(
+    'Dinner will be ready soon',
+    'Calling the kids from the kitchen',
+    'You thought it would take hours. Ask',
+    "It's your favorite dish",
+    "You've been waiting for two hours already",
+    "You've never cooked this before",
+  ),
+];
+
+const _firstSets = [
   [
     ScriptLine(
       "You're coming home tonight.",

@@ -37,8 +37,7 @@ String spokenNumbers(String text) {
   // Cards, phone numbers, codes: groups of 3+ digits joined by spaces or dashes (parentheses
   // allowed), or one run of 5+ digits. Read digit by digit, a pause between groups.
   t = t.replaceAllMapped(RegExp(r'\(?\b\d{3,}\b\)?(?:[ -]\(?\b\d{3,}\b\)?)+|\b\d{5,}\b'), (m) {
-    final groups = RegExp(r'\d+').allMatches(m[0]!).map((g) => g[0]!.split('').map((d) => _ones[int.parse(d)]));
-    return groups.map((g) => g.join(' ')).join(', ');
+    return RegExp(r'\d+').allMatches(m[0]!).map((g) => _digits(g[0]!)).join(', ');
   });
   // Thousands with commas: 12,500.
   t = t.replaceAllMapped(RegExp(r'\b\d{1,3}(?:,\d{3})+\b'), (m) => _count(m[0]!.replaceAll(',', '')));
@@ -55,8 +54,29 @@ String spokenNumbers(String text) {
 /// more): "one zero zero …".
 String _count(String digits) {
   final n = digits.length <= 12 ? int.tryParse(digits) : null;
-  if (n == null || n > 999999999999) return digits.split('').map((d) => _ones[int.parse(d)]).join(' ');
+  if (n == null || n > 999999999999) return _digits(digits);
   return numberWords(n);
+}
+
+/// [digits] said one by one. A run longer than 5 is split into groups with a pause between, the way
+/// people say them (2026-11-23): 10 as a phone number (3-3-4), a multiple of 4 in fours (a card),
+/// otherwise threes, ending in one or two fours.
+String _digits(String digits) {
+  String say(String g) => g.split('').map((d) => _ones[int.parse(d)]).join(' ');
+  final n = digits.length;
+  if (n <= 5) return say(digits);
+  final sizes = n == 10
+      ? [3, 3, 4]
+      : n % 4 == 0
+      ? List.filled(n ~/ 4, 4)
+      : [...List.filled((n - 4 * (n % 3)) ~/ 3, 3), ...List.filled(n % 3, 4)];
+  final groups = <String>[];
+  var at = 0;
+  for (final s in sizes) {
+    groups.add(say(digits.substring(at, at + s)));
+    at += s;
+  }
+  return groups.join(', ');
 }
 
 /// "twenty-one" → "twenty-first", "one hundred" → "one hundredth".

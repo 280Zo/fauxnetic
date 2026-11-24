@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import '../engine/tts_models.dart';
+import 'download_center.dart';
 import 'model_store.dart';
 
 /// The extra models asked for and not yet downloaded, one id per line, so a download that failed
@@ -31,7 +32,7 @@ Future<void> queueMissingDownloads(
   Future<void> Function(String id, String label, List<PinnedModel> files) enqueue,
 ) async {
   if (!await ModelStore(dir, models: kVoiceModels).allPresent()) {
-    await enqueue('qwen', 'Voice model', kVoiceModels);
+    await enqueue('qwen', DownloadCenter.kVoiceModelLabel, kVoiceModels);
   }
   final wanted = await _wanted(dir);
   for (final m in kTtsModels.where((m) => m.files.isNotEmpty)) {

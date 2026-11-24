@@ -29,12 +29,12 @@ class OfferScreen extends StatelessWidget {
         'You can do this later: on People, tap the mic next to $name.',
       ),
       Offer.feelings => (
-        "Give $name's voice some feeling",
+        "Give $name's voice some emotion",
         'Say one short sentence five ways: plainly, as a question, excited, annoyed and worried. About a minute.',
         null,
         'Then lines can sound excited, annoyed or worried.',
-        'Add feelings',
-        'You can add feelings later: on People, tap the mic next to $name.',
+        'Add emotions',
+        'You can add emotions later: on People, tap the mic next to $name.',
       ),
     };
     return Scaffold(

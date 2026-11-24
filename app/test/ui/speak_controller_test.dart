@@ -292,6 +292,36 @@ void main() {
       final (c, _, _) = await waiting(NetKind.metered);
       expect(c.statusOf(c.items.single), 'Waiting for the voice model · waiting for Wi-Fi');
     });
+
+    test('a line saved without a model waits for the default, whatever the picker shows', () async {
+      // Review minor (2026-11-19): the status used the picker's model; the line runs on the default.
+      final stores = <String, FakeStore>{};
+      final center = DownloadCenter(
+        store: (files) => stores.putIfAbsent(files.first.name, () => FakeStore(files)),
+        network: () async => NetKind.unmetered,
+        keeper: CountingKeeper(),
+        poll: const Duration(hours: 1),
+      );
+      addTearDown(center.dispose);
+      preparer = Preparer(engine, cues, people, NoKeeper(), ready: (m) async => false);
+      final c = CueSpeakController(
+        sam,
+        cues,
+        preparer,
+        player,
+        temp,
+        shares,
+        downloads: center,
+        models: ModelChoice(current: () => 'qwen', ready: (_) async => true, select: (_) async {}),
+      );
+      c.modelId = 'pocket';
+      await center.enqueue('qwen', 'Voice model', [file('talker', 1000)]);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await cues.add(sam.id, 'An older line.');
+      await c.refresh();
+      await c.idle;
+      expect(c.statusOf(c.items.single), startsWith('Waiting for the voice model'));
+    });
   });
 
   group('take adjustments (2026-11-18)', () {

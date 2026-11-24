@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fauxnetic/cues/preparer.dart';
+import 'package:fauxnetic/engine/tts_models.dart';
 import 'package:fauxnetic/models/download_center.dart';
 import 'package:fauxnetic/models/model_store.dart';
 import 'package:fauxnetic/platform/network.dart';
@@ -77,6 +78,41 @@ void main() {
     );
   });
   tearDown(() => center.dispose());
+
+  test('progress redraws a few times a second at most, and its last value always shows', () async {
+    // Review minor (2026-11-19): every network chunk rebuilt the People bar, Settings and Speak.
+    await center.enqueue('qwen', 'Voice model', voice);
+    await settle();
+    var redraws = 0;
+    center.addListener(() => redraws++);
+    for (var i = 1; i <= 200; i++) {
+      stores['talker']!.emit(i * 5);
+    }
+    await settle();
+    expect(redraws, lessThanOrEqualTo(2));
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    expect(center.job('qwen')!.received, 1000);
+    expect(redraws, inInclusiveRange(1, 3), reason: 'the last value is shown too');
+  });
+
+  test('fetching a model whose download failed tries it again', () async {
+    // Review minor (2026-11-19): picking it showed "Downloading…" and nothing happened.
+    final m = ttsModel('pocket');
+    stores[m.files.first.name] = FakeStore(m.files)..alwaysFail = const ModelStoreError('bad');
+    await center.fetchModel(m);
+    await settle();
+    expect(center.job('pocket')!.state, JobState.failed);
+    stores[m.files.first.name]!.alwaysFail = null;
+    await center.fetchModel(m);
+    await settle();
+    expect(center.job('pocket')!.state, JobState.downloading);
+  });
+
+  test("fetching Qwen fetches the voice set, under the voice model's name", () async {
+    await center.fetchModel(ttsModel('qwen'));
+    expect(center.job('qwen')!.files, kVoiceModels);
+    expect(center.job('qwen')!.label, 'Voice model');
+  });
 
   test('downloads queued jobs one at a time, in order', () async {
     await center.enqueue('qwen', 'Voice model', voice);

@@ -113,17 +113,22 @@ class AppServices {
     job: downloads.job,
   );
 
-  /// Starts an extra model's background download (2026-11-18).
-  Future<void> startModelDownload(String id) {
-    final m = ttsModel(id);
-    return downloads.enqueue(m.id, m.label, m.files);
-  }
+  /// Starts a model's background download (2026-11-18), or tries its failed one again.
+  Future<void> startModelDownload(String id) => downloads.fetchModel(ttsModel(id));
 
-  /// The default model: what voices use until one is picked for them on the Speak screen.
+  /// The default model: what voices use until one is picked for them on the Speak screen. Any
+  /// choice replaces a wish for a model still downloading ([wantDefault]).
   Future<void> setDefaultModel(String id) async {
+    _wantedDefault = null;
     settings.value = settings.value.copyWith(model: ttsModel(id).id);
     await settingsStore.save(settings.value);
   }
+
+  /// Settings → Models picked [id] while it isn't downloaded: it becomes the default when its
+  /// download is done, whether or not Settings is still open (review minor, 2026-11-19).
+  Future<void> wantDefault(String id) async => _wantedDefault = ttsModel(id).id;
+
+  String? _wantedDefault;
 
   /// Settings → Models: every model, whether it's on the phone, and the space it takes.
   Future<List<ModelInfo>> modelInfo() async => [
@@ -283,6 +288,8 @@ class AppServices {
         onDone: (id) {
           unawaited(clearWanted(models.dir, id));
           unawaited(preparer.runUntilEmpty());
+          // Picked as the default while it downloaded.
+          if (s._wantedDefault == id) unawaited(s.setDefaultModel(id));
         },
         // An extra model asked for is tried again at the next launch until it is here.
         onEnqueue: (id) {

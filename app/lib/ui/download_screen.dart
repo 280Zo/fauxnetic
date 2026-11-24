@@ -29,6 +29,10 @@ class _DownloadScreenState extends State<DownloadScreen> {
   bool _done = false;
   String? _error;
 
+  /// The last error was the connection: the button says Retry (kept as a kind, not read back out
+  /// of the message's words; review minor, 2026-11-19).
+  bool _offline = false;
+
   @override
   void dispose() {
     _sub?.cancel();
@@ -44,7 +48,8 @@ class _DownloadScreenState extends State<DownloadScreen> {
       (p) => setState(() => _progress = p),
       onError: (Object e) => setState(() {
         _running = false;
-        _error = e is ModelStoreError && e.kind == ModelErrorKind.network
+        _offline = e is ModelStoreError && e.kind == ModelErrorKind.network;
+        _error = _offline
             ? 'No connection. Connect to the internet to download.'
             : e is ModelStoreError
             ? e.message
@@ -100,7 +105,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
                 FilledButton(
                   onPressed: _go,
                   child: Text(
-                    _error != null && _error!.startsWith('No connection')
+                    _error != null && _offline
                         ? 'Retry'
                         : update
                         ? 'Download update (${formatSize(size)})'

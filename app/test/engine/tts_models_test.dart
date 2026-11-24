@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fauxnetic/engine/tts_models.dart';
+import 'package:fauxnetic/models/model_store.dart';
 
 void main() {
   test('Qwen is the default and needs no extra download', () {
@@ -53,5 +54,8 @@ void main() {
   test('download size adds up each model', () {
     expect(ttsModel('pocket').downloadBytes, 123632992);
     expect(ttsModel('voxcpm').downloadBytes, 2827049792);
+    // Review minor (2026-11-19): Qwen showed "Downloads 0 B"; its files are the voice set.
+    expect(ttsModel('qwen').downloadBytes, kVoiceModels.fold<int>(0, (n, f) => n + f.size));
+    expect(ttsModel('qwen').downloadFiles, kVoiceModels);
   });
 }

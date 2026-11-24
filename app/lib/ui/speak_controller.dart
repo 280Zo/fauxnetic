@@ -141,6 +141,12 @@ abstract class SpeakController extends ChangeNotifier {
   /// Starts downloading [id] in the background; the picker switches to it once it is here.
   Future<void> startDownload(String id) async {}
 
+  /// Lets [id]'s download use mobile data (it was waiting for Wi-Fi).
+  void allowMobileData(String id) {}
+
+  /// Whether [id]'s files are on the phone, as last checked (the model menu is built at once).
+  bool onPhone(String id) => true;
+
   Future<void> setModel(String id) async {
     modelId = id;
     notifyListeners();
@@ -228,21 +234,41 @@ class CueSpeakController extends SpeakController {
   final DownloadCenter? downloads;
 
   void _downloadsChanged() {
-    if (!_disposed) notifyListeners();
+    if (_disposed) return;
+    notifyListeners();
+    // A download finishing puts its model on the phone: the menu's lines catch up.
+    if ((downloads?.jobs ?? const <DownloadJob>[]).any((j) => j.state == JobState.done && _onPhone[j.id] != true)) {
+      unawaited(_checkModels());
+    }
   }
 
   @override
   DownloadJob? downloadOf(String id) => downloads?.job(id);
 
   @override
-  Future<void> startDownload(String id) async {
-    final m = ttsModel(id);
-    await downloads?.enqueue(m.id, m.label, m.files);
+  Future<void> startDownload(String id) async => downloads?.fetchModel(ttsModel(id));
+
+  @override
+  void allowMobileData(String id) => downloads?.allowMobileData(id);
+
+  /// Which models are on the phone, checked on [refresh] and when a download finishes.
+  final _onPhone = <String, bool>{};
+
+  @override
+  bool onPhone(String id) => _onPhone[id] ?? true;
+
+  Future<void> _checkModels() async {
+    final m = models;
+    if (m == null) return;
+    for (final t in kTtsModels) {
+      _onPhone[t.id] = await m.ready(t.id);
+    }
+    if (!_disposed) notifyListeners();
   }
 
   /// "Waiting for the voice model (42%)" for a queued line whose model is still downloading.
   String? _waitingFor(CueItem item) {
-    final id = ttsModel(item.model ?? modelId).id;
+    final id = ttsModel(item.model ?? _savedWithout).id;
     final j = downloadOf(id);
     if (j == null || j.state == JobState.done) return null;
     final name = id == kTtsModels.first.id ? 'the voice model' : ttsModel(id).label;
@@ -365,6 +391,7 @@ class CueSpeakController extends SpeakController {
         if (c.status == CueStatus.queued) c.id,
     ];
     notifyListeners();
+    if (_onPhone.isEmpty) await _checkModels();
   }
 
   void _kick() {
@@ -538,7 +565,11 @@ class CueSpeakController extends SpeakController {
   }
 
   /// The model making (or that will make) [item]: what the preparer opened, else the line's own.
-  TtsModel _modelOf(CueItem item) => ttsModel(_preparer.modelOf(item.id) ?? item.model ?? modelId);
+  TtsModel _modelOf(CueItem item) => ttsModel(_preparer.modelOf(item.id) ?? item.model ?? _savedWithout);
+
+  /// The model a line saved without one is made with: the default, as the preparer uses (review
+  /// minor, 2026-11-19: the status used the picker's model instead).
+  String get _savedWithout => models?.current() ?? modelId;
 
   double _guessSeconds(CueItem item) {
     final rate = speeds?.secondsPerWord(_modelOf(item).id);

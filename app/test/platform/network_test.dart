@@ -23,8 +23,11 @@ void main() {
     expect(await currentNetwork(), NetKind.none);
   });
 
-  test('an error counts as unmetered', () async {
+  test('an error or no answer counts as metered, so mobile data is never used unasked', () async {
+    // Review minor (2026-11-19): it counted as Wi-Fi. Metered waits for Wi-Fi or "Use mobile data".
     answer((c) => throw PlatformException(code: 'x'));
-    expect(await currentNetwork(), NetKind.unmetered);
+    expect(await currentNetwork(), NetKind.metered);
+    answer((c) => null);
+    expect(await currentNetwork(), NetKind.metered);
   });
 }
