@@ -414,8 +414,20 @@ class AppServices {
 
   /// tiny.en follows along while reading; base.en checks each finished take.
   /// Earlier takes of [mood] are passed in so Add more and Re-record ask for text not used yet.
-  Future<ReadingSession> readingSession(Person p, Mood mood, {bool replace = false}) async {
-    final earlier = (await takes.forPerson(p.id)).where((t) => t.mood == mood).toList();
+  /// How many of the core session's lines [p] has recorded: the passage, each way of saying the
+  /// sentence, and the question (any answer).
+  Future<int> coreLinesRecorded(Person p) async {
+    final all = await takes.forPerson(p.id);
+    final passage = all.any((t) => t.fromScript && t.phrase == null && t.mood == Mood.conversational);
+    final ways = {for (final t in all) ?t.phrase};
+    final answered = all.any((t) => !t.fromScript);
+    return (passage ? 1 : 0) + ways.length + (answered ? 1 : 0);
+  }
+
+  /// [resume]: continuing a core session that was cut short, so all of the person's takes are passed.
+  Future<ReadingSession> readingSession(Person p, Mood mood, {bool replace = false, bool resume = false}) async {
+    final all = await takes.forPerson(p.id);
+    final earlier = resume ? all : all.where((t) => t.mood == mood).toList();
     final follow = WhisperTranscriber(models, ModelRole.asrTiny);
     final full = WhisperTranscriber(models, ModelRole.asrBase);
     final c = ReadingController(
@@ -429,6 +441,7 @@ class AppServices {
       builder,
       replace: replace,
       earlier: earlier,
+      resume: resume,
       cleaner: rnnoiseCleaner,
       denoise: rnnoiseDenoise,
     );

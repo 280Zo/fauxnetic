@@ -62,10 +62,13 @@ class _SpeakScreenState extends State<SpeakScreen> {
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       Expanded(
+        // The box fills the dock's height (kept for the player), so long lines have room.
         child: TextField(
           controller: _input,
-          minLines: 1,
-          maxLines: 3,
+          expands: true,
+          minLines: null,
+          maxLines: null,
+          textAlignVertical: TextAlignVertical.top,
           textInputAction: TextInputAction.send,
           onSubmitted: (_) => _add(),
           decoration: InputDecoration(
@@ -192,8 +195,8 @@ class _Moods extends StatelessWidget {
               visualDensity: VisualDensity.compact,
               materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
               labelPadding: const EdgeInsets.symmetric(horizontal: 6),
-              selectedColor: context.colors.clone,
-              shape: StadiumBorder(side: BorderSide(color: context.colors.rule)),
+              selectedColor: _moodColor(context, m) ?? context.colors.ink,
+              shape: StadiumBorder(side: BorderSide(color: _moodColor(context, m) ?? context.colors.rule)),
               onSelected: (_) => c.setMood(m),
             ),
           ],
@@ -423,7 +426,7 @@ class _LoadingDialogState extends State<_LoadingDialog> {
 
 /// The shown take's waveform; bars up to [progress] (0–1) are drawn in the clone color.
 class _Waveform extends StatelessWidget {
-  const _Waveform({required this.peaks, required this.progress});
+  const _Waveform({super.key, required this.peaks, required this.progress});
   final List<double> peaks;
   final double progress;
 
@@ -469,8 +472,9 @@ class _Dock extends StatelessWidget {
   final SpeakController controller;
   final Widget compose;
 
-  /// Room for the text box, the moods row, and the model picker with Generate.
-  static const height = 208.0;
+  /// Room for the approved player (2026-11-23): who made it, up to three rows of the line, the
+  /// transport and the four actions. Typing uses the same height, so the list never jumps.
+  static const height = 312.0;
 
   @override
   Widget build(BuildContext context) {
@@ -498,46 +502,52 @@ class _Player extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = controller;
+    final colors = context.colors;
     final playing = c.playingId == item.id;
-    final muted = TextStyle(color: context.colors.muted, fontSize: 13);
-    final extras = [?_currentClip(item)?.engine, if (item.mood != Mood.conversational) item.mood.label];
+    final engine = _currentClip(item)?.engine;
     final length = c.lengthSeconds;
     final progress = playing && length > 0 ? (c.playedSeconds / length).clamp(0.0, 1.0) : 0.0;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // Who made it: the clone's name, its mood, the take, and the model for Again.
         SizedBox(
-          height: 32,
+          height: 34,
           child: Row(
             children: [
-              if (item.clips.length > 1)
-                _takeSwitcher(context, item, c)
-              else if (!c.adjustOf(item).isDefault)
-                Padding(padding: const EdgeInsets.only(left: 4), child: _adjustedMark(context)),
-              // Model and Re-generate shrink together rather than wrap on a narrow phone.
+              Flexible(
+                child: Text.rich(
+                  TextSpan(
+                    children: [
+                      TextSpan(
+                        text: c.person.name,
+                        style: TextStyle(color: colors.clone, fontWeight: FontWeight.w700),
+                      ),
+                      // The take's model only when it isn't the one in the picker beside it.
+                      TextSpan(
+                        text: ' synthetic${engine == null || engine == ttsModel(c.modelId).label ? '' : ', $engine'}',
+                      ),
+                    ],
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: colors.soft, fontSize: 14),
+                ),
+              ),
+              if (item.mood != Mood.conversational) ...[const SizedBox(width: 8), _moodTag(context, item.mood)],
+              if (item.clips.length > 1) _takeSwitcher(context, item, c),
+              // On a narrow phone the picker shrinks rather than push the row off the edge.
               Expanded(
                 child: Align(
                   alignment: Alignment.centerRight,
                   child: FittedBox(
                     fit: BoxFit.scaleDown,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _ModelPicker(controller: c, label: false),
-                        TextButton(
-                          onPressed: () => c.tryAgain(item),
-                          style: TextButton.styleFrom(
-                            foregroundColor: context.colors.clone,
-                            visualDensity: VisualDensity.compact,
-                          ),
-                          child: const Text(
-                            '↻ Re-generate',
-                            maxLines: 1,
-                            softWrap: false,
-                            style: TextStyle(fontWeight: FontWeight.w700),
-                          ),
-                        ),
-                      ],
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(color: colors.raised, borderRadius: BorderRadius.circular(10)),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: _ModelPicker(controller: c, label: false),
+                      ),
                     ),
                   ),
                 ),
@@ -545,83 +555,77 @@ class _Player extends StatelessWidget {
             ],
           ),
         ),
+        const SizedBox(height: 8),
         _SpokenLine(
           words: c.words.isNotEmpty ? c.words : item.text.split(RegExp(r'\s+')),
           active: playing ? activeWord(c.wordStarts, c.playedSeconds) : -1,
         ),
-        Text.rich(
-          TextSpan(
+        const Spacer(),
+        // The transport: the big Play at the end of a slim waveform, then the time.
+        Container(
+          padding: const EdgeInsets.fromLTRB(6, 6, 16, 6),
+          decoration: BoxDecoration(color: colors.paper, borderRadius: BorderRadius.circular(999)),
+          child: Row(
             children: [
-              TextSpan(
-                text: c.person.name,
-                style: TextStyle(color: context.colors.clone, fontWeight: FontWeight.w700),
-              ),
-              TextSpan(text: ' · synthetic${extras.map((e) => ' · $e').join()}'),
-            ],
-          ),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: muted,
-        ),
-        const SizedBox(height: 4),
-        Expanded(
-          child: _Waveform(peaks: c.waveform, progress: progress),
-        ),
-        // Share at the left, play in the center under its time, New at the right.
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Expanded(
-              child: Row(
-                children: [
-                  IconButton(
-                    tooltip: 'Share',
-                    visualDensity: VisualDensity.compact,
-                    icon: const Icon(Icons.share_outlined, size: 20),
-                    onPressed: () async {
-                      final messenger = ScaffoldMessenger.of(context);
-                      await c.share(item);
-                      final why = c.shareError;
-                      if (why != null) messenger.showSnackBar(SnackBar(content: Text(why)));
-                    },
-                  ),
-                  IconButton(
-                    tooltip: 'Adjust',
-                    visualDensity: VisualDensity.compact,
-                    icon: const Icon(Icons.tune, size: 20),
-                    onPressed: () => showAdjustSheet(context, c, item),
-                  ),
-                ],
-              ),
-            ),
-            Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  '${_clock(playing ? c.playedSeconds : 0)} / ${_clock(length)}',
-                  style: muted.copyWith(fontSize: 12),
-                ),
-                IconButton.filled(
+              SizedBox.square(
+                dimension: 60,
+                child: IconButton.filled(
                   tooltip: playing ? 'Stop' : 'Play',
-                  visualDensity: VisualDensity.compact,
-                  style: IconButton.styleFrom(
-                    backgroundColor: context.colors.clone,
-                    foregroundColor: context.colors.paper,
-                  ),
-                  icon: Icon(playing ? Icons.stop : Icons.play_arrow),
+                  style: IconButton.styleFrom(backgroundColor: colors.clone, foregroundColor: colors.paper),
+                  icon: Icon(playing ? Icons.stop_rounded : Icons.play_arrow_rounded, size: 32),
                   onPressed: () => playing ? c.stop() : c.play(item),
                 ),
-              ],
-            ),
-            Expanded(
-              child: Align(
-                alignment: Alignment.centerRight,
-                child: TextButton(
-                  onPressed: c.newLine,
-                  style: TextButton.styleFrom(foregroundColor: context.colors.clone),
-                  child: const Text('✎ New', style: TextStyle(fontWeight: FontWeight.w700)),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: SizedBox(
+                  height: 28,
+                  child: _Waveform(key: const Key('waveform'), peaks: c.waveform, progress: progress),
                 ),
               ),
+              const SizedBox(width: 12),
+              Text(
+                '${_clock(playing ? c.playedSeconds : 0)} / ${_clock(length)}',
+                style: TextStyle(color: colors.ink, fontSize: 15, fontFeatures: const [FontFeature.tabularFigures()]),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              flex: 10,
+              child: _Action(
+                label: 'Share',
+                icon: Icons.ios_share_rounded,
+                onTap: () async {
+                  final messenger = ScaffoldMessenger.of(context);
+                  await c.share(item);
+                  final why = c.shareError;
+                  if (why != null) messenger.showSnackBar(SnackBar(content: Text(why)));
+                },
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              flex: 10,
+              child: _Action(
+                label: 'Adjust',
+                icon: Icons.tune_rounded,
+                marked: !c.adjustOf(item).isDefault,
+                onTap: () => showAdjustSheet(context, c, item),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              flex: 10,
+              child: _Action(label: 'Again', icon: Icons.refresh_rounded, onTap: () => c.tryAgain(item)),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              flex: 13,
+              child: _Action(label: 'New line', icon: Icons.edit_rounded, primary: true, onTap: c.newLine),
             ),
           ],
         ),
@@ -630,8 +634,97 @@ class _Player extends StatelessWidget {
   }
 }
 
-/// The line in the player, on one row: while it plays, the word being spoken is magenta and the
-/// row slides along to keep it in view (word times are estimates, see estimateWordStarts).
+/// One of the player's four actions: a big labeled button (62 high). [primary] is New line, in
+/// solid ink so it doesn't compete with the magenta Play; [marked] shows a dot (Adjust: changed).
+class _Action extends StatelessWidget {
+  const _Action({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+    this.primary = false,
+    this.marked = false,
+  });
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+  final bool primary, marked;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colors;
+    final fg = primary ? colors.paper : colors.ink;
+    return Material(
+      key: Key('act-$label'),
+      color: primary ? colors.ink : colors.raised,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: SizedBox(
+          height: 62,
+          child: Stack(
+            children: [
+              Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(icon, size: 22, color: fg),
+                    const SizedBox(height: 4),
+                    Text(
+                      label,
+                      maxLines: 1,
+                      style: TextStyle(
+                        color: fg,
+                        fontSize: 14,
+                        fontWeight: primary ? FontWeight.w700 : FontWeight.w400,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (marked)
+                Positioned(
+                  top: 8,
+                  right: 10,
+                  child: Container(
+                    key: const Key('adjusted'),
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(color: colors.clone, shape: BoxShape.circle),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Each mood's own color (conversational has none: neutral).
+Color? _moodColor(BuildContext context, Mood m) => switch (m) {
+  Mood.excited => context.colors.excited,
+  Mood.annoyed => context.colors.annoyed,
+  Mood.worried => context.colors.worried,
+  _ => null,
+};
+
+/// A mood's name in its color, on a tint of it.
+Widget _moodTag(BuildContext context, Mood m) {
+  final color = _moodColor(context, m) ?? context.colors.soft;
+  return Container(
+    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 2),
+    decoration: BoxDecoration(color: color.withValues(alpha: 0.16), borderRadius: BorderRadius.circular(99)),
+    child: Text(
+      m.label,
+      style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w700),
+    ),
+  );
+}
+
+/// The line in the player, wrapped on up to three rows: while it plays, the word being spoken is
+/// magenta and a longer line scrolls down to keep it in view (word times are estimates, see
+/// estimateWordStarts). Until 2026-11-23 it was one sliding row, which cut most lines off.
 class _SpokenLine extends StatefulWidget {
   const _SpokenLine({required this.words, required this.active});
   final List<String> words;
@@ -639,7 +732,8 @@ class _SpokenLine extends StatefulWidget {
   /// Index of the word being spoken; -1 when none (not playing, or before the first word).
   final int active;
 
-  static const style = TextStyle(fontWeight: FontWeight.w700, fontSize: 16);
+  static const style = TextStyle(fontWeight: FontWeight.w700, fontSize: 20, height: 1.3);
+  static const rows = 3;
 
   @override
   State<_SpokenLine> createState() => _SpokenLineState();
@@ -661,22 +755,25 @@ class _SpokenLineState extends State<_SpokenLine> {
     }
   }
 
-  /// Keeps the spoken word about a third of the way in; back to the start when it stops.
+  /// Keeps the row with the spoken word in view, one row from the top; back to the start when it stops.
   void _follow() {
     if (!mounted || !_scroll.hasClients) return;
     final pos = _scroll.position;
     var target = 0.0;
-    if (widget.active >= 0) {
-      final before = TextPainter(
-        text: TextSpan(
-          style: DefaultTextStyle.of(context).style.merge(_SpokenLine.style),
-          text: [for (var k = 0; k < widget.active; k++) _piece(k)].join(),
-        ),
+    final width = context.size?.width;
+    if (widget.active >= 0 && width != null) {
+      final style = DefaultTextStyle.of(context).style.merge(_SpokenLine.style);
+      final all = [for (var k = 0; k < widget.words.length; k++) _piece(k)];
+      final painter = TextPainter(
+        text: TextSpan(style: style, text: all.join()),
         textDirection: TextDirection.ltr,
         textScaler: MediaQuery.textScalerOf(context),
-      )..layout();
-      target = (before.width - pos.viewportDimension / 3).clamp(0.0, pos.maxScrollExtent);
-      before.dispose();
+      )..layout(maxWidth: width);
+      final at = all.take(widget.active).fold<int>(0, (n, p) => n + p.length);
+      final y = painter.getOffsetForCaret(TextPosition(offset: at), Rect.zero).dy;
+      final row = painter.preferredLineHeight;
+      target = (y - row).clamp(0.0, pos.maxScrollExtent);
+      painter.dispose();
     }
     if ((target - pos.pixels).abs() > 1) {
       _scroll.animateTo(target, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
@@ -692,24 +789,25 @@ class _SpokenLineState extends State<_SpokenLine> {
   @override
   Widget build(BuildContext context) {
     final clone = context.colors.clone;
-    return SingleChildScrollView(
-      key: const Key('spoken-line'),
-      controller: _scroll,
-      scrollDirection: Axis.horizontal,
-      child: Text.rich(
-        key: const Key('spoken-words'),
-        TextSpan(
-          children: [
-            for (var k = 0; k < widget.words.length; k++)
-              TextSpan(
-                text: _piece(k),
-                style: k == widget.active ? TextStyle(color: clone) : null,
-              ),
-          ],
+    final row = MediaQuery.textScalerOf(context).scale(_SpokenLine.style.fontSize!) * _SpokenLine.style.height!;
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: row * _SpokenLine.rows + 1),
+      child: SingleChildScrollView(
+        key: const Key('spoken-line'),
+        controller: _scroll,
+        child: Text.rich(
+          key: const Key('spoken-words'),
+          TextSpan(
+            children: [
+              for (var k = 0; k < widget.words.length; k++)
+                TextSpan(
+                  text: _piece(k),
+                  style: k == widget.active ? TextStyle(color: clone) : null,
+                ),
+            ],
+          ),
+          style: _SpokenLine.style,
         ),
-        maxLines: 1,
-        softWrap: false,
-        style: _SpokenLine.style,
       ),
     );
   }
@@ -774,12 +872,14 @@ class _CueRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = controller;
+    final colors = context.colors;
     final selected = c.shownId == item.id && item.hasClip;
     final played = item.status == CueStatus.played;
+    final playing = c.playingId == item.id;
     final statusColor = switch (item.status) {
-      CueStatus.ready => context.colors.clone,
-      CueStatus.failed => Theme.of(context).colorScheme.error,
-      _ => context.colors.muted,
+      CueStatus.failed => colors.failed,
+      CueStatus.preparing => colors.making,
+      _ => colors.soft,
     };
     final onTap = switch (item.status) {
       CueStatus.ready || CueStatus.played => () => selected ? c.newLine() : c.select(item),
@@ -793,11 +893,9 @@ class _CueRow extends StatelessWidget {
       item,
       c,
       ClipRRect(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
         child: Material(
-          color: selected
-              ? Color.alphaBlend(context.colors.clone.withValues(alpha: 0.12), context.colors.card)
-              : context.colors.card,
+          color: selected ? Color.alphaBlend(colors.clone.withValues(alpha: 0.14), colors.card) : colors.card,
           child: InkWell(
             key: selected ? Key('selected-${item.id}') : null,
             onTap: onTap,
@@ -808,44 +906,83 @@ class _CueRow extends StatelessWidget {
             },
             child: Container(
               decoration: BoxDecoration(
-                border: Border(left: BorderSide(color: selected ? context.colors.clone : Colors.transparent, width: 3)),
+                border: Border(left: BorderSide(color: selected ? colors.clone : Colors.transparent, width: 4)),
               ),
-              padding: const EdgeInsets.fromLTRB(10, 10, 8, 10),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
+              child: Row(
                 children: [
-                  Text(
-                    item.text,
-                    style: TextStyle(color: played && !selected ? context.colors.muted : context.colors.ink),
-                  ),
-                  if (item.status == CueStatus.failed && item.error != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text('${item.error} Tap to retry.', style: TextStyle(color: statusColor, fontSize: 13)),
-                    )
-                  else if (!item.hasClip)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text(c.statusOf(item), style: TextStyle(color: statusColor, fontSize: 13)),
-                    )
-                  else if (takes > 1)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 2),
-                      child: Text('$takes takes', style: TextStyle(color: context.colors.muted, fontSize: 12)),
-                    ),
-                  if (making)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 6),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(2),
-                        child: LinearProgressIndicator(
-                          value: c.progressOf(item),
-                          minHeight: 3,
-                          color: context.colors.muted,
-                          backgroundColor: context.colors.rule,
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Full strength always: grey text for played lines looked disabled.
+                        Text(item.text, style: TextStyle(color: colors.ink, fontSize: 18, height: 1.38)),
+                        const SizedBox(height: 6),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 4,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            if (item.status == CueStatus.failed && item.error != null)
+                              Text('${item.error} Tap to retry.', style: TextStyle(color: statusColor, fontSize: 14))
+                            else if (!item.hasClip)
+                              Text(c.statusOf(item), style: TextStyle(color: statusColor, fontSize: 14))
+                            else if (playing)
+                              Text(
+                                'Playing',
+                                style: TextStyle(color: colors.clone, fontSize: 14, fontWeight: FontWeight.w700),
+                              )
+                            else if (played)
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.check_rounded, size: 16, color: colors.soft),
+                                  const SizedBox(width: 4),
+                                  Text('Played', style: TextStyle(color: colors.soft, fontSize: 14)),
+                                ],
+                              )
+                            else
+                              Text(
+                                'Ready',
+                                style: TextStyle(color: colors.clone, fontSize: 14, fontWeight: FontWeight.w700),
+                              ),
+                            if (item.mood != Mood.conversational) _moodTag(context, item.mood),
+                            if (takes > 1) Text('$takes takes', style: TextStyle(color: colors.soft, fontSize: 14)),
+                          ],
                         ),
+                        if (making)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(4),
+                              child: LinearProgressIndicator(
+                                value: c.progressOf(item),
+                                minHeight: 4,
+                                color: colors.making,
+                                backgroundColor: colors.rule,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  if (item.hasClip) ...[
+                    const SizedBox(width: 12),
+                    SizedBox.square(
+                      key: Key('play-${item.id}'),
+                      dimension: 44,
+                      child: IconButton.filled(
+                        tooltip: playing ? 'Stop ${item.text}' : 'Play ${item.text}',
+                        padding: EdgeInsets.zero,
+                        style: IconButton.styleFrom(
+                          backgroundColor: playing ? colors.clone : colors.raised,
+                          foregroundColor: playing ? colors.paper : colors.ink,
+                        ),
+                        icon: Icon(playing ? Icons.stop_rounded : Icons.play_arrow_rounded, size: 24),
+                        onPressed: () => playing ? c.stop() : c.play(item),
                       ),
                     ),
+                  ],
                 ],
               ),
             ),

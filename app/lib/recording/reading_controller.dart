@@ -69,10 +69,24 @@ class ReadingController extends ChangeNotifier {
     List<Take> earlier = const [],
     this.cleaner,
     this.denoise,
+    this.resume = false,
   }) : _random = random ?? Random(),
        _earlier = earlier {
-    if (mood == Mood.conversational) core = pickCoreSession(_random, earlier: earlier);
+    if (mood != Mood.conversational) return;
+    if (!resume) {
+      core = pickCoreSession(_random, earlier: earlier);
+      return;
+    }
+    // Continuing a session that was cut short: the same text, from the first line not recorded.
+    core = resumeCoreSession(_random, earlier: earlier);
+    final ls = lines;
+    bool recorded(ScriptLine l) => earlier.any((t) => t.prompt == l.text && t.phrase == l.phrase?.name);
+    final next = ls.indexWhere((l) => !l.openPrompt && !recorded(l));
+    index = next < 0 ? ls.length - 1 : next;
   }
+
+  /// Continuing a core session that was cut short; [_earlier] holds all of the person's takes.
+  final bool resume;
 
   /// The person's takes from earlier sessions of this mood, so Add more and Re-record ask for new text.
   final List<Take> _earlier;
@@ -769,7 +783,11 @@ class ReadingController extends ChangeNotifier {
   /// that can't be made is left out; the person can record that mood on its own later.
   Future<void> _buildSentenceMoods() async {
     for (final m in [Mood.excited, Mood.annoyed, Mood.worried]) {
-      final sentences = _sessionTakes.where((t) => t.mood == m && t.phrase != null).toList();
+      // Continuing: the sentences recorded before the session was cut short count too.
+      final sentences = [
+        ..._sessionTakes,
+        if (resume) ..._earlier,
+      ].where((t) => t.mood == m && t.phrase != null).toList();
       if (sentences.isEmpty) continue;
       VoiceRef ref;
       try {

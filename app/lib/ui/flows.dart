@@ -76,6 +76,26 @@ class Flows {
     ),
   );
 
+  /// Continues a new voice whose session was cut short, from the first line not recorded.
+  Future<void> continueRecording(Person p) => _nav.push(
+    MaterialPageRoute<void>(
+      builder: (_) => _guard(
+        p,
+        _ReadingHost(
+          services: s,
+          person: p,
+          mood: Mood.conversational,
+          resume: true,
+          onFinished: (ctx, ready) => Navigator.of(ctx).pushReplacement(
+            MaterialPageRoute<void>(
+              builder: (_) => _guard(ready, _VoiceReadyHost(flows: this, person: ready)),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+
   Future<void> settings({required VoidCallback onModelsRemoved}) => _nav.push(
     MaterialPageRoute<void>(
       builder: (ctx) => SettingsScreen(
@@ -140,11 +160,12 @@ class _ReadingHost extends StatefulWidget {
     required this.mood,
     required this.onFinished,
     this.replace = false,
+    this.resume = false,
   });
   final AppServices services;
   final Person person;
   final Mood mood;
-  final bool replace;
+  final bool replace, resume;
   final void Function(BuildContext context, Person p) onFinished;
 
   @override
@@ -159,7 +180,9 @@ class _ReadingHostState extends State<_ReadingHost> {
   void initState() {
     super.initState();
     unawaited(
-      widget.services.readingSession(widget.person, widget.mood, replace: widget.replace).then((s) async {
+      widget.services.readingSession(widget.person, widget.mood, replace: widget.replace, resume: widget.resume).then((
+        s,
+      ) async {
         if (_disposed) {
           // Left during the spinner: same as leaving the reading screen (an unfinished new
           // person is removed).

@@ -59,6 +59,38 @@ void main() {
     expect(events, ['record', 'file', 'open Ana', 'moods Ben']);
   });
 
+  // Owner, 2026-11-23: an install killed the app mid-session; the person was left "voice not ready"
+  // with only Delete. The approved design: how far it got, in amber, and Continue.
+  testWidgets('an unfinished voice says how far it got and offers Continue', (t) async {
+    final events = <String>[];
+    const aj = Person(id: 'j', name: 'AJ', source: PersonSource.recorded);
+    await t.pumpWidget(
+      MaterialApp(
+        theme: buildTheme(Brightness.light),
+        home: PeopleScreen(
+          load: () async => [aj],
+          onRecordNew: () async {},
+          onFromFile: () async {},
+          onOpen: (p) async => events.add('open ${p.name}'),
+          onMoods: (p) async {},
+          onDelete: (p) async {},
+          onContinue: (p) async => events.add('continue ${p.name}'),
+          linesRecorded: (p) async => 3,
+        ),
+      ),
+    );
+    await t.pumpAndSettle();
+    final label = find.text('Not finished: 3 of 7 lines recorded');
+    expect(label, findsOneWidget);
+    expect(t.widget<Text>(label).style?.color, FauxneticColors.light.making);
+    expect(t.widget<LinearProgressIndicator>(find.byType(LinearProgressIndicator)).value, closeTo(3 / 7, 1e-9));
+    expect(find.byTooltip('Delete AJ'), findsOneWidget);
+    await t.tap(find.text('AJ'));
+    await t.tap(find.text('Continue'));
+    await t.pumpAndSettle();
+    expect(events, ['continue AJ'], reason: 'the row itself opens nothing; Continue resumes');
+  });
+
   testWidgets('delete asks first', (t) async {
     final events = await pump(t);
     await t.tap(find.byTooltip('Delete Ana'));

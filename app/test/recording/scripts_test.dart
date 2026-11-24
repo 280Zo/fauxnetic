@@ -175,6 +175,22 @@ void main() {
     }
   });
 
+  test('resuming keeps the passage and sentence set already started', () {
+    final earlier = [passageTake(kPassages[2]), phraseTake(kPhraseSets[1][0]), phraseTake(kPhraseSets[1][1])];
+    for (var s = 0; s < 10; s++) {
+      final c = resumeCoreSession(Random(s), earlier: earlier);
+      expect(c.passage, kPassages[2]);
+      expect(c.phrases, kPhraseSets[1]);
+    }
+    expect(kCoreLines, 7);
+  });
+
+  test('resuming with only a sentence started still finds its set, and picks a passage', () {
+    final c = resumeCoreSession(Random(1), earlier: [phraseTake(kPhraseSets[3][2])]);
+    expect(c.phrases, kPhraseSets[3]);
+    expect(kPassages, contains(c.passage));
+  });
+
   test('sentence takes do not count as the passage read', () {
     final earlier = [for (final set in kPhraseSets) ...set.map(phraseTake)];
     final seen = {for (var s = 0; s < 100; s++) pickCoreSession(Random(s), earlier: earlier).passage};

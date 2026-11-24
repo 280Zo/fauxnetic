@@ -250,6 +250,41 @@ void main() {
       expect(p.voices[Mood.conversational]!.refText, c.lines.first.text, reason: 'the main voice is the passage alone');
     });
 
+    test('continuing an unfinished session starts at the first line not recorded, same text', () async {
+      final first = controller();
+      await readGood(first); // passage
+      await readGood(first); // plain
+      await readGood(first); // question
+      final earlier = await takes.forPerson(sam.id);
+      final c = ReadingController(
+        sam,
+        Mood.conversational,
+        mic,
+        follow,
+        full,
+        takes,
+        people,
+        builder,
+        random: Random(9),
+        earlier: earlier,
+        resume: true,
+      );
+      full.next = () => words(c.line.text);
+      expect(c.lines.map((l) => l.text).take(6), first.lines.map((l) => l.text).take(6));
+      expect(c.index, 3);
+      expect(c.line.phrase, PhraseTone.excited);
+      while (!c.line.openPrompt) {
+        await readGood(c);
+      }
+      while (!c.done) {
+        await c.skip();
+      }
+      final p = await c.finish();
+      expect(p!.ready, isTrue);
+      expect(p.voices[Mood.conversational]!.refText, first.lines.first.text, reason: 'the earlier passage take');
+      expect(p.recorded(Mood.excited), isTrue);
+    });
+
     test('an excited session reads three excited sentences, each with its scene', () {
       final c = controller(Mood.excited);
       expect(c.lines, hasLength(3));

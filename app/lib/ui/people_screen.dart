@@ -5,6 +5,7 @@ import 'package:material_ui/material_ui.dart';
 import '../models/download_center.dart';
 import '../people/expiry.dart';
 import '../people/person.dart';
+import '../recording/scripts.dart';
 import '../theme.dart';
 import 'download_bar.dart';
 
@@ -30,7 +31,16 @@ class PeopleScreen extends StatefulWidget {
     this.takeExpired,
     this.onSettings,
     this.downloads,
+    this.onContinue,
+    this.linesRecorded,
   });
+
+  /// Resumes a recorded voice whose session was cut short (killed by an install, a crash, a
+  /// flat battery); null: such a voice only offers Delete. Returns once that session is done.
+  final Future<void> Function(Person p)? onContinue;
+
+  /// How many of the core session's lines an unfinished voice has recorded.
+  final Future<int> Function(Person p)? linesRecorded;
 
   /// Background downloads, shown as a slim bar under the title while one is pending.
   final DownloadCenter? downloads;
@@ -76,10 +86,20 @@ class _PeopleScreenState extends State<PeopleScreen> {
     super.dispose();
   }
 
+  /// Lines recorded so far, for each unfinished voice that can be continued.
+  var _recorded = <String, int>{};
+
+  bool _unfinished(Person p) => !p.ready && p.source == PersonSource.recorded && widget.onContinue != null;
+
   Future<void> _reload() async {
     final all = await widget.load();
+    final count = widget.linesRecorded;
+    final recorded = <String, int>{for (final p in all.where(_unfinished)) p.id: count == null ? 0 : await count(p)};
     if (!mounted) return;
-    setState(() => _people = all);
+    setState(() {
+      _people = all;
+      _recorded = recorded;
+    });
     for (final name in widget.takeExpired?.call() ?? const <String>[]) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$name's voice expired and was deleted.")));
     }
@@ -143,16 +163,52 @@ class _PeopleScreenState extends State<PeopleScreen> {
                       separatorBuilder: (_, _) => const Divider(height: 1, indent: 20, endIndent: 20),
                       itemBuilder: (_, i) {
                         final p = _people[i];
+                        final unfinished = _unfinished(p);
+                        final done = (_recorded[p.id] ?? 0).clamp(0, kCoreLines);
                         return ListTile(
                           contentPadding: const EdgeInsets.only(left: 20, right: 8, top: 4, bottom: 4),
                           title: Text(p.name, style: const TextStyle(fontWeight: FontWeight.w700)),
-                          subtitle: Text(
-                            personSubtitle(p, now: _now()),
-                            style: TextStyle(color: context.colors.muted),
-                          ),
+                          // An unfinished voice says how far it got, in the "in progress" amber.
+                          subtitle: unfinished
+                              ? Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Not finished: $done of $kCoreLines lines recorded',
+                                      style: TextStyle(color: context.colors.making, fontWeight: FontWeight.w700),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    SizedBox(
+                                      width: 160,
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(4),
+                                        child: LinearProgressIndicator(
+                                          value: done / kCoreLines,
+                                          minHeight: 4,
+                                          color: context.colors.making,
+                                          backgroundColor: context.colors.rule,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                )
+                              : Text(
+                                  personSubtitle(p, now: _now()),
+                                  style: TextStyle(color: context.colors.muted),
+                                ),
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
+                              if (unfinished)
+                                FilledButton(
+                                  onPressed: () => _then(() => widget.onContinue!(p)),
+                                  style: FilledButton.styleFrom(
+                                    backgroundColor: context.colors.making,
+                                    foregroundColor: context.colors.paper,
+                                    minimumSize: const Size(0, 40),
+                                  ),
+                                  child: const Text('Continue', style: TextStyle(fontWeight: FontWeight.w700)),
+                                ),
                               if (p.ready)
                                 IconButton(
                                   tooltip: 'Add moods for ${p.name}',

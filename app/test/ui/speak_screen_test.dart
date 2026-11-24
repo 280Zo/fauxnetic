@@ -196,7 +196,7 @@ void main() {
     await t.pump();
     expect(inDock(find.text('Type what Sam should say')), findsOneWidget);
     expect(inDock(find.text('Generate')), findsOneWidget);
-    expect(find.text('↻ Re-generate'), findsNothing);
+    expect(find.text('Again'), findsNothing);
   });
 
   testWidgets('tapping a ready line puts it in the player, with synthetic, model and mood', (t) async {
@@ -217,9 +217,10 @@ void main() {
     expect(c.selectedIds, ['a']);
     expect(c.playedIds, isEmpty, reason: 'selecting does not play');
     expect(inDock(find.text('“Can you read me the code?”')), findsOneWidget);
-    expect(inDock(find.text('Sam · synthetic · VoxCPM 2 · Excited')), findsOneWidget);
-    expect(inDock(find.text('↻ Re-generate')), findsOneWidget);
-    expect(inDock(find.text('✎ New')), findsOneWidget);
+    expect(inDock(find.text('Sam synthetic, VoxCPM 2')), findsOneWidget);
+    expect(inDock(find.text('Excited')), findsOneWidget);
+    expect(inDock(find.text('Again')), findsOneWidget);
+    expect(inDock(find.text('New line')), findsOneWidget);
     expect(find.byType(TextField), findsNothing, reason: 'the player replaces the text box');
   });
 
@@ -241,7 +242,7 @@ void main() {
     c.setItems([cue('a', CueStatus.ready, 'One.')]);
     c.setShown('a');
     await t.pump();
-    await t.tap(find.text('✎ New'));
+    await t.tap(find.text('New line'));
     await t.pump();
     expect(c.newLines, 1);
     expect(find.byType(TextField), findsOneWidget);
@@ -252,8 +253,9 @@ void main() {
     c.setItems([cue('a', CueStatus.ready, 'Hi.')]);
     await t.pump();
     final words = t.getRect(find.text('Hi.'));
-    final list = t.getRect(find.byType(ListView));
-    await t.tapAt(Offset(list.right - 30, words.center.dy));
+    final play = t.getRect(find.byKey(const Key('play-a')));
+    // Between the words and the line's own play button (which plays instead).
+    await t.tapAt(Offset((words.right + play.left) / 2, words.center.dy));
     await t.pump();
     expect(c.selectedIds, ['a']);
   });
@@ -383,13 +385,13 @@ void main() {
     c.setItems([cue('a', CueStatus.played, 'One.'), cue('b', CueStatus.ready, 'Two.')]);
     c.setShown('a');
     await t.pump();
-    await t.tap(find.text('↻ Re-generate'));
-    await t.tap(inDock(find.byTooltip('Share')));
+    await t.tap(find.text('Again'));
+    await t.tap(inDock(find.text('Share')));
     expect(c.retriedIds, ['a']);
     expect(c.sharedIds, ['a']);
   });
 
-  group('player layout (owner, 2026-11-18)', () {
+  group('player layout (owner-approved redesign, 2026-11-23)', () {
     CueItem twoTakes() => const CueItem(
       id: 'a',
       personId: 'p1',
@@ -412,17 +414,17 @@ void main() {
       return c;
     }
 
-    testWidgets('top row: takes at the far left, then the model picker and a one-line Re-generate', (t) async {
+    testWidgets('top row: who made it, then the takes, then the model picker at the right', (t) async {
       await narrow(t);
+      final who = t.getRect(inDock(find.textContaining('synthetic')));
       final takes = t.getRect(inDock(find.byTooltip('Previous take')));
       final model = t.getRect(inDock(find.byTooltip('Choose the voice model')));
-      final regen = t.getRect(inDock(find.text('↻ Re-generate')));
       final dock = t.getRect(find.byKey(const Key('dock')));
-      expect(takes.left - dock.left, lessThan(40));
-      expect(takes.right, lessThan(model.left));
-      expect(model.right, lessThanOrEqualTo(regen.left));
-      expect(regen.height, lessThan(24), reason: 'one line');
-      expect(regen.right, lessThanOrEqualTo(dock.right));
+      expect(who.left - dock.left, lessThan(40));
+      expect(who.right, lessThanOrEqualTo(takes.left));
+      expect(takes.right, lessThanOrEqualTo(model.left));
+      expect(model.right, lessThanOrEqualTo(dock.right));
+      expect((who.center.dy - model.center.dy).abs(), lessThan(4), reason: 'one row');
       expect(inDock(find.text('Model')), findsNothing, reason: 'no label in the player');
     });
 
@@ -437,18 +439,22 @@ void main() {
       expect(c.retriedIds, isEmpty, reason: 'picking does not re-generate by itself');
     });
 
-    testWidgets('bottom row: Share left, play centered under its time, New right', (t) async {
+    testWidgets('the transport: Play at the left, the waveform, the time at the right; actions below', (t) async {
       await narrow(t);
-      final dock = t.getRect(find.byKey(const Key('dock')));
-      final share = t.getRect(inDock(find.byTooltip('Share')));
       final play = t.getRect(inDock(find.byTooltip('Play')));
+      final wave = t.getRect(inDock(find.byKey(const Key('waveform'))));
       final time = t.getRect(inDock(find.textContaining(' / ')));
-      final newer = t.getRect(inDock(find.text('✎ New')));
-      expect(share.left - dock.left, lessThan(40));
-      expect(play.center.dx, closeTo(dock.center.dx, 2));
-      expect(time.bottom, lessThanOrEqualTo(play.top));
-      expect(time.center.dx, closeTo(play.center.dx, 2));
-      expect(dock.right - newer.right, lessThan(40));
+      expect(play.right, lessThanOrEqualTo(wave.left));
+      expect(wave.right, lessThanOrEqualTo(time.left));
+      expect((play.center.dy - wave.center.dy).abs(), lessThan(2));
+      final acts = [
+        for (final l in ['Share', 'Adjust', 'Again', 'New line']) t.getRect(inDock(find.text(l))),
+      ];
+      for (var i = 1; i < acts.length; i++) {
+        expect(acts[i - 1].right, lessThan(acts[i].left), reason: 'in order, left to right');
+        expect((acts[i].center.dy - acts[0].center.dy).abs(), lessThan(2), reason: 'one row');
+      }
+      expect(acts.first.top, greaterThan(play.bottom), reason: 'under the transport');
     });
 
     testWidgets('tapping outside the lines and the player goes back to typing', (t) async {
@@ -479,7 +485,7 @@ void main() {
       status: CueStatus.ready,
       clips: [CueClip('cues/a-0.bin', 1, adjust: a)],
     );
-    final glyph = find.byWidgetPredicate((w) => w is Icon && w.icon == Icons.tune && w.size == 12);
+    final glyph = find.byKey(const Key('adjusted'));
 
     Future<FakeSpeakController> shown(WidgetTester t, [TakeAdjust a = TakeAdjust.defaults]) async {
       final c = await pump(t);
@@ -491,7 +497,7 @@ void main() {
 
     testWidgets("the Adjust button opens the panel with the take's settings", (t) async {
       await shown(t);
-      await t.tap(inDock(find.byTooltip('Adjust')));
+      await t.tap(inDock(find.text('Adjust')));
       await t.pumpAndSettle();
       for (final s in ['Speed', 'Pitch', 'Pauses', 'Volume', 'Even out loudness', 'Reset']) {
         expect(find.text(s), findsOneWidget, reason: s);
@@ -503,7 +509,7 @@ void main() {
 
     testWidgets('moving Speed saves it on release', (t) async {
       final c = await shown(t);
-      await t.tap(inDock(find.byTooltip('Adjust')));
+      await t.tap(inDock(find.text('Adjust')));
       await t.pumpAndSettle();
       await t.drag(find.byKey(const Key('adjust-speed')), const Offset(60, 0));
       await t.pumpAndSettle();
@@ -513,7 +519,7 @@ void main() {
 
     testWidgets('Reset restores defaults', (t) async {
       final c = await shown(t, const TakeAdjust(speed: 1.25, pitch: 2));
-      await t.tap(inDock(find.byTooltip('Adjust')));
+      await t.tap(inDock(find.text('Adjust')));
       await t.pumpAndSettle();
       expect(find.text('1.25×'), findsOneWidget);
       await t.tap(find.text('Reset'));
@@ -524,7 +530,7 @@ void main() {
 
     testWidgets('each slider has its own reset, which leaves the others', (t) async {
       final c = await shown(t, const TakeAdjust(speed: 1.25, pitch: 2));
-      await t.tap(inDock(find.byTooltip('Adjust')));
+      await t.tap(inDock(find.text('Adjust')));
       await t.pumpAndSettle();
       await t.tap(find.byTooltip('Reset Speed'));
       await t.pumpAndSettle();
@@ -538,7 +544,7 @@ void main() {
 
     testWidgets('the take loops while the panel is open', (t) async {
       final c = await shown(t);
-      await t.tap(inDock(find.byTooltip('Adjust')));
+      await t.tap(inDock(find.text('Adjust')));
       await t.pumpAndSettle();
       expect(c.loops, [true]);
       await t.tapAt(const Offset(10, 10)); // outside the sheet
@@ -557,7 +563,7 @@ void main() {
     testWidgets('a refused share shows why', (t) async {
       final c = await shown(t);
       c.failShare = true;
-      await t.tap(inDock(find.byTooltip('Share')));
+      await t.tap(inDock(find.text('Share')));
       await t.pump();
       expect(find.text(MarkMissing.message), findsOneWidget);
     });
@@ -585,7 +591,7 @@ void main() {
       expect(colorOf(t, 'three'), isNot(Palette.clone));
     });
 
-    testWidgets('a long line slides along to keep the spoken word in view', (t) async {
+    testWidgets('a long line scrolls down to keep the spoken word in view', (t) async {
       final c = await pump(t);
       final text = List.generate(30, (i) => 'word$i').join(' ');
       c.setItems([cue('a', CueStatus.ready, text)]);
@@ -621,7 +627,7 @@ void main() {
     ]);
     c.setShown('a');
     await t.pump();
-    expect(inDock(find.text('Sam · synthetic · Pocket TTS')), findsOneWidget);
+    expect(inDock(find.text('Sam synthetic, Pocket TTS')), findsOneWidget);
     expect(find.textContaining('VoxCPM 2'), findsNothing, reason: 'only the take shown');
   });
 
@@ -913,6 +919,117 @@ void main() {
     });
   }
 
+  // Owner, 2026-11-23: the line was cut to one row; the approved design wraps it, with a slim waveform.
+  testWidgets('the player shows a two-row line in full, with a slim waveform', (t) async {
+    final c = await pumpMoods(t, const Size(448, 997));
+    const text = 'Hey, can you pick up the kids from school today? I have a meeting that runs late.';
+    c.setItems([
+      const CueItem(
+        id: 'a',
+        personId: 'p3',
+        text: text,
+        status: CueStatus.ready,
+        clips: [CueClip('cues/a-0.bin', 1, engine: 'Qwen3-TTS')],
+      ),
+    ]);
+    c.setShown('a');
+    await t.pump();
+    final line = t.state<ScrollableState>(
+      find.descendant(of: find.byKey(const Key('spoken-line')), matching: find.byType(Scrollable)),
+    );
+    expect(line.position.maxScrollExtent, 0, reason: 'nothing hidden');
+    expect(line.position.axis, Axis.vertical, reason: 'the line wraps instead of running off the side');
+    expect(t.getSize(find.byKey(const Key('waveform'))).height, lessThanOrEqualTo(32));
+  });
+
+  // The owner-approved redesign (2026-11-23): lines read as clearly as the rest of the screen, color
+  // carries meaning (status, mood), and the player has a big Play and four labeled actions.
+  group('redesign', () {
+    const colors = FauxneticColors.light;
+    const clip = [CueClip('cues/a-0.bin', 1, engine: 'Qwen3-TTS')];
+    CueItem line(CueStatus s, {Mood mood = Mood.conversational, String? error}) => CueItem(
+      id: 'a',
+      personId: 'p1',
+      text: 'Feed the dog.',
+      status: s,
+      mood: mood,
+      error: error,
+      clips: s == CueStatus.ready || s == CueStatus.played ? clip : const [],
+    );
+    Color? colorOfText(WidgetTester t, String s) => t.widget<Text>(find.text(s).first).style?.color;
+
+    testWidgets('a played line keeps full-strength text and says Played', (t) async {
+      final c = await pump(t);
+      c.setItems([line(CueStatus.played)]);
+      await t.pump();
+      expect(colorOfText(t, 'Feed the dog.'), colors.ink, reason: 'grey looked disabled');
+      expect(find.text('Played'), findsOneWidget);
+    });
+
+    testWidgets('a ready line has its own play button', (t) async {
+      final c = await pump(t);
+      c.setItems([line(CueStatus.ready)]);
+      await t.pump();
+      expect(find.text('Ready'), findsOneWidget);
+      await t.tap(find.byKey(const Key('play-a')));
+      await t.pump();
+      expect(c.playedIds, ['a']);
+      expect(t.getSize(find.byKey(const Key('play-a'))).width, greaterThanOrEqualTo(44));
+    });
+
+    testWidgets('a line being made says so in amber, with an amber bar', (t) async {
+      final c = await pump(t);
+      c.setItems([line(CueStatus.preparing)]);
+      await t.pump();
+      expect(colorOfText(t, 'Making with Qwen3-TTS · about 20 s left'), colors.making);
+      expect(t.widget<LinearProgressIndicator>(find.byType(LinearProgressIndicator)).color, colors.making);
+      expect(find.byKey(const Key('play-a')), findsNothing, reason: 'nothing to play yet');
+    });
+
+    testWidgets('a failed line says so in the failed color', (t) async {
+      final c = await pump(t);
+      c.setItems([line(CueStatus.failed, error: 'Out of memory.')]);
+      await t.pump();
+      expect(colorOfText(t, 'Out of memory. Tap to retry.'), colors.failed);
+    });
+
+    testWidgets("a line's mood shows as a tag in that mood's color", (t) async {
+      final c = await pump(t);
+      c.setItems([line(CueStatus.ready, mood: Mood.excited)]);
+      await t.pump();
+      final tag = find.descendant(of: find.byType(ListView), matching: find.text('Excited'));
+      expect(t.widget<Text>(tag).style?.color, colors.excited);
+    });
+
+    testWidgets('the player has a big Play and four labeled actions', (t) async {
+      final c = await pump(t);
+      c.setItems([line(CueStatus.ready, mood: Mood.excited)]);
+      c.setShown('a');
+      await t.pump();
+      expect(t.getSize(inDock(find.byTooltip('Play'))).width, greaterThanOrEqualTo(56));
+      for (final label in ['Share', 'Adjust', 'Again', 'New line']) {
+        expect(inDock(find.text(label)), findsOneWidget, reason: label);
+        expect(
+          t.getSize(inDock(find.ancestor(of: find.text(label), matching: find.byKey(Key('act-$label'))))).height,
+          greaterThanOrEqualTo(56),
+          reason: label,
+        );
+      }
+      await t.tap(inDock(find.text('Again')));
+      expect(c.retriedIds, ['a']);
+      await t.tap(inDock(find.text('New line')));
+      expect(c.newLines, 1);
+    });
+
+    testWidgets("a picked mood chip takes that mood's color", (t) async {
+      final c = await pump(t);
+      c.setMood(Mood.excited);
+      await t.pump();
+      final chip = t.widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'Excited'));
+      expect(chip.selectedColor, colors.excited);
+    });
+  });
+
   testWidgets('no mood buttons when only conversational is recorded', (t) async {
     final c = FakeSpeakController(
       const Person(id: 'p2', name: 'Ann', source: PersonSource.recorded, voices: {Mood.conversational: ref}),
@@ -943,6 +1060,10 @@ void main() {
   });
 
   testWidgets('tapping lines selects ready and played ones and retries failed ones', (t) async {
+    // A phone-sized screen: the default 800x600 leaves the list under the taller dock too short.
+    t.view.physicalSize = const Size(448, 997);
+    t.view.devicePixelRatio = 1;
+    addTearDown(t.view.reset);
     final c = await pump(t);
     c.setItems([
       cue('a', CueStatus.played, 'One.'),

@@ -224,6 +224,26 @@ CoreSession pickCoreSession(Random r, {List<Take> earlier = const []}) {
   return CoreSession(passages[r.nextInt(passages.length)], byUse(kPrompts, asked, r), _setsByUse(r, earlier).first);
 }
 
+/// Lines in a core session: the passage, the sentence said each way, and the question.
+final kCoreLines = 1 + PhraseTone.values.length + 1;
+
+/// Continuing a core session that was cut short (2026-11-23: an install killed the app mid-session):
+/// the passage and sentence set already started in [earlier], so the takes kept fit the lines shown;
+/// a fresh pick for whatever wasn't started yet.
+CoreSession resumeCoreSession(Random r, {List<Take> earlier = const []}) {
+  final fresh = pickCoreSession(r, earlier: earlier);
+  final read = [
+    for (final t in earlier)
+      if (t.fromScript && t.phrase == null) t.prompt ?? t.text,
+  ].where(kPassages.contains);
+  final said = {
+    for (final t in earlier)
+      if (t.phrase != null) '${t.phrase}|${t.prompt ?? t.text}',
+  };
+  final set = kPhraseSets.where((s) => s.any((l) => said.contains('${l.phrase!.name}|${l.text}'))).lastOrNull;
+  return CoreSession(read.lastOrNull ?? fresh.passage, fresh.prompts, set ?? fresh.phrases);
+}
+
 /// The [options] used the fewest times in [used].
 List<String> leastUsed(List<String> options, List<String> used, Random r) {
   final byCount = byUse(options, used, r);

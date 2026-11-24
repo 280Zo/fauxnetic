@@ -24,9 +24,22 @@ class FauxneticColors extends ThemeExtension<FauxneticColors> {
     required this.clone,
     required this.uncertainFill,
     required this.uncertainBorder,
+    required this.raised,
+    required this.soft,
+    required this.making,
+    required this.failed,
+    required this.excited,
+    required this.annoyed,
+    required this.worried,
   });
 
   final Color paper, card, ink, muted, rule, real, clone, uncertainFill, uncertainBorder;
+
+  /// Speak screen redesign (owner-approved mockup, 2026-11-23): color carries meaning, not only
+  /// magenta. [raised]: buttons and controls on a card. [soft]: secondary text that still reads as
+  /// enabled (muted looked disabled). [making]: a line being made. [failed]: a line that failed.
+  /// [excited], [annoyed], [worried]: each mood's own color on its chips and tags.
+  final Color raised, soft, making, failed, excited, annoyed, worried;
 
   static const light = FauxneticColors(
     paper: Palette.paper,
@@ -38,6 +51,13 @@ class FauxneticColors extends ThemeExtension<FauxneticColors> {
     clone: Palette.clone,
     uncertainFill: Color(0xFFFFF1C2),
     uncertainBorder: Color(0xFFE0B000),
+    raised: Color(0xFFE4E7EE),
+    soft: Color(0xFF3B4252),
+    making: Color(0xFF9A6700),
+    failed: Color(0xFFC9302C),
+    excited: Color(0xFFB85A00),
+    annoyed: Color(0xFFC0392B),
+    worried: Color(0xFF5B4BD6),
   );
 
   /// "Ink night", picked by the owner (2026-11-15).
@@ -51,6 +71,13 @@ class FauxneticColors extends ThemeExtension<FauxneticColors> {
     clone: Color(0xFFF0559F),
     uncertainFill: Color(0xFF3A3115),
     uncertainBorder: Color(0xFFE0B000),
+    raised: Color(0xFF232936),
+    soft: Color(0xFFC3C9D6),
+    making: Color(0xFFF2B84B),
+    failed: Color(0xFFFF6B6B),
+    excited: Color(0xFFFF9F43),
+    annoyed: Color(0xFFF25F5C),
+    worried: Color(0xFF9B8CFF),
   );
 
   @override
@@ -64,6 +91,13 @@ class FauxneticColors extends ThemeExtension<FauxneticColors> {
     Color? clone,
     Color? uncertainFill,
     Color? uncertainBorder,
+    Color? raised,
+    Color? soft,
+    Color? making,
+    Color? failed,
+    Color? excited,
+    Color? annoyed,
+    Color? worried,
   }) => FauxneticColors(
     paper: paper ?? this.paper,
     card: card ?? this.card,
@@ -74,6 +108,13 @@ class FauxneticColors extends ThemeExtension<FauxneticColors> {
     clone: clone ?? this.clone,
     uncertainFill: uncertainFill ?? this.uncertainFill,
     uncertainBorder: uncertainBorder ?? this.uncertainBorder,
+    raised: raised ?? this.raised,
+    soft: soft ?? this.soft,
+    making: making ?? this.making,
+    failed: failed ?? this.failed,
+    excited: excited ?? this.excited,
+    annoyed: annoyed ?? this.annoyed,
+    worried: worried ?? this.worried,
   );
 
   @override
@@ -90,6 +131,13 @@ class FauxneticColors extends ThemeExtension<FauxneticColors> {
       clone: c(clone, other.clone),
       uncertainFill: c(uncertainFill, other.uncertainFill),
       uncertainBorder: c(uncertainBorder, other.uncertainBorder),
+      raised: c(raised, other.raised),
+      soft: c(soft, other.soft),
+      making: c(making, other.making),
+      failed: c(failed, other.failed),
+      excited: c(excited, other.excited),
+      annoyed: c(annoyed, other.annoyed),
+      worried: c(worried, other.worried),
     );
   }
 }

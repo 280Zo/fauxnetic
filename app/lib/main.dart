@@ -97,6 +97,8 @@ class _VoiceCloneAppState extends State<VoiceCloneApp> {
                   onOpen: flows.openSpeak,
                   onMoods: flows.moods,
                   onDelete: (p) => s.deletePerson(p.id),
+                  onContinue: flows.continueRecording,
+                  linesRecorded: s.coreLinesRecorded,
                   takeExpired: s.takeExpired,
                   downloads: s.downloads,
                   onSettings: () => flows.settings(
