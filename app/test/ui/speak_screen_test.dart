@@ -228,7 +228,8 @@ void main() {
     expect(c.selectedIds, ['a']);
     expect(c.playedIds, isEmpty, reason: 'selecting does not play');
     expect(inDock(find.text('“Can you read me the code?”')), findsOneWidget);
-    expect(inDock(find.text('Sam synthetic, VoxCPM 2')), findsOneWidget);
+    expect(inDock(find.text('Sam synthetic')), findsOneWidget);
+    expect(inDock(find.text('Made with VoxCPM 2')), findsOneWidget);
     expect(inDock(find.text('Excited')), findsOneWidget);
     expect(inDock(find.text('Again')), findsOneWidget);
     expect(inDock(find.text('New line')), findsOneWidget);
@@ -638,8 +639,38 @@ void main() {
     ]);
     c.setShown('a');
     await t.pump();
-    expect(inDock(find.text('Sam synthetic, Pocket TTS')), findsOneWidget);
+    expect(inDock(find.text('Take 2 made with Pocket TTS')), findsOneWidget);
     expect(find.textContaining('VoxCPM 2'), findsNothing, reason: 'only the take shown');
+  });
+
+  // Owner, 2026-11-23: with several takes and a mood, the top row cut "made with" off, and it was
+  // hidden when the take's model was the one in the picker. Approved: its own line, always shown.
+  testWidgets('the take\'s model has its own line, shown even when it is the picker\'s model', (t) async {
+    t.view.physicalSize = const Size(440, 760);
+    t.view.devicePixelRatio = 1;
+    addTearDown(t.view.reset);
+    final c = await pump(t);
+    c.setItems([
+      const CueItem(
+        id: 'a',
+        personId: 'p1',
+        text: 'We won!',
+        status: CueStatus.ready,
+        mood: Mood.excited,
+        clips: [
+          CueClip('cues/a-0.bin', 1, engine: 'Qwen3-TTS'),
+          CueClip('cues/a-1.bin', 2, engine: 'Qwen3-TTS'),
+          CueClip('cues/a-2.bin', 3, engine: 'Qwen3-TTS'),
+        ],
+        current: 1,
+      ),
+    ]);
+    c.setShown('a');
+    await t.pump();
+    final made = inDock(find.text('Take 2 made with Qwen3-TTS'));
+    expect(made, findsOneWidget);
+    expect(t.getRect(made).top, greaterThanOrEqualTo(t.getRect(inDock(find.text('Sam synthetic'))).bottom));
+    expect(inDock(find.text('Again:')), findsOneWidget);
   });
 
   testWidgets('the voice model picker sits by the text box and starts on Qwen', (t) async {

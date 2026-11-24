@@ -227,11 +227,12 @@ class _Tools extends StatelessWidget {
 /// "Model Qwen3-TTS ▾". Picking a model that isn't downloaded shows its size and licence note
 /// first, then downloads it; the choice applies from the next line and is kept for this voice.
 class _ModelPicker extends StatelessWidget {
-  const _ModelPicker({required this.controller, this.label = true});
+  const _ModelPicker({required this.controller, this.label = 'Model'});
   final SpeakController controller;
 
-  /// The "Model" caption; the player leaves it out to fit Re-generate on one line.
-  final bool label;
+  /// The caption before the model: "Model" by the text box, "Again:" in the player (the model its
+  /// Again button will use).
+  final String label;
 
   Future<void> _pick(BuildContext context, String id) async {
     final c = controller;
@@ -321,10 +322,8 @@ class _ModelPicker extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (label) ...[
-          Text('Model', style: TextStyle(color: context.colors.muted, fontSize: 12)),
-          const SizedBox(width: 6),
-        ],
+        Text(label, style: TextStyle(color: context.colors.muted, fontSize: 12)),
+        const SizedBox(width: 6),
         PopupMenuButton<String>(
           tooltip: 'Choose the voice model',
           onSelected: (id) => _pick(context, id),
@@ -481,10 +480,7 @@ class _Player extends StatelessWidget {
                         text: c.person.name,
                         style: TextStyle(color: colors.clone, fontWeight: FontWeight.w700),
                       ),
-                      // The take's model only when it isn't the one in the picker beside it.
-                      TextSpan(
-                        text: ' synthetic${engine == null || engine == ttsModel(c.modelId).label ? '' : ', $engine'}',
-                      ),
+                      const TextSpan(text: ' synthetic'),
                     ],
                   ),
                   maxLines: 1,
@@ -504,7 +500,7 @@ class _Player extends StatelessWidget {
                       decoration: BoxDecoration(color: colors.raised, borderRadius: BorderRadius.circular(10)),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 4),
-                        child: _ModelPicker(controller: c, label: false),
+                        child: _ModelPicker(controller: c, label: 'Again:'),
                       ),
                     ),
                   ),
@@ -513,6 +509,27 @@ class _Player extends StatelessWidget {
             ],
           ),
         ),
+        // The model that made the shown take, on its own line so the takes and mood can't push it
+        // off, and always, even when it's the picker's (owner-approved mockup, 2026-11-23).
+        if (engine != null)
+          Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(
+                  text: item.clips.length > 1
+                      ? 'Take ${item.current.clamp(0, item.clips.length - 1) + 1} made with '
+                      : 'Made with ',
+                ),
+                TextSpan(
+                  text: engine,
+                  style: TextStyle(color: colors.ink, fontWeight: FontWeight.w700),
+                ),
+              ],
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: colors.soft, fontSize: 14),
+          ),
         const SizedBox(height: 8),
         _SpokenLine(
           words: c.words.isNotEmpty ? c.words : item.text.split(RegExp(r'\s+')),
