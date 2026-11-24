@@ -227,12 +227,14 @@ class _Tools extends StatelessWidget {
 /// "Model Qwen3-TTS ▾". Picking a model that isn't downloaded shows its size and licence note
 /// first, then downloads it; the choice applies from the next line and is kept for this voice.
 class _ModelPicker extends StatelessWidget {
-  const _ModelPicker({required this.controller, this.label = 'Model'});
+  const _ModelPicker({required this.controller, this.label = 'Model', this.tooltip = 'Choose the voice model'});
   final SpeakController controller;
 
-  /// The caption before the model: "Model" by the text box, "Again:" in the player (the model its
-  /// Again button will use).
-  final String label;
+  /// The caption before the model: "Model" by the text box, none in the player.
+  final String? label;
+
+  /// In the player it picks the model its Again button uses (owner, 2026-11-24).
+  final String tooltip;
 
   Future<void> _pick(BuildContext context, String id) async {
     final c = controller;
@@ -322,10 +324,12 @@ class _ModelPicker extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(label, style: TextStyle(color: context.colors.muted, fontSize: 12)),
-        const SizedBox(width: 6),
+        if (label case final l?) ...[
+          Text(l, style: TextStyle(color: context.colors.muted, fontSize: 12)),
+          const SizedBox(width: 6),
+        ],
         PopupMenuButton<String>(
-          tooltip: 'Choose the voice model',
+          tooltip: tooltip,
           onSelected: (id) => _pick(context, id),
           itemBuilder: (_) => [for (final m in kTtsModels) _menuItem(context, m)],
           child: Row(
@@ -467,12 +471,13 @@ class _Player extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Who made it: the clone's name, its mood, the take, and the model for Again.
+        // Who made it at the left, the takes in the middle, the model for Again at the right
+        // (owner-approved mockup, 2026-11-24). Two equal halves keep the takes centered.
         SizedBox(
           height: 34,
           child: Row(
             children: [
-              Flexible(
+              Expanded(
                 child: Text.rich(
                   TextSpan(
                     children: [
@@ -488,7 +493,6 @@ class _Player extends StatelessWidget {
                   style: TextStyle(color: colors.soft, fontSize: 14),
                 ),
               ),
-              if (item.mood != Mood.conversational) ...[const SizedBox(width: 8), _moodTag(context, item.mood)],
               if (item.clips.length > 1) _takeSwitcher(context, item, c),
               // On a narrow phone the picker shrinks rather than push the row off the edge.
               Expanded(
@@ -500,7 +504,7 @@ class _Player extends StatelessWidget {
                       decoration: BoxDecoration(color: colors.raised, borderRadius: BorderRadius.circular(10)),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 4),
-                        child: _ModelPicker(controller: c, label: 'Again:'),
+                        child: _ModelPicker(controller: c, label: null, tooltip: 'Model for Again'),
                       ),
                     ),
                   ),
@@ -509,26 +513,35 @@ class _Player extends StatelessWidget {
             ],
           ),
         ),
-        // The model that made the shown take, on its own line so the takes and mood can't push it
-        // off, and always, even when it's the picker's (owner-approved mockup, 2026-11-23).
-        if (engine != null)
-          Text.rich(
-            TextSpan(
-              children: [
-                TextSpan(
-                  text: item.clips.length > 1
-                      ? 'Take ${item.current.clamp(0, item.clips.length - 1) + 1} made with '
-                      : 'Made with ',
+        // The mood, then the model that made the shown take, on their own line so the top row can't
+        // push them off; the model always, even when it's the picker's (owner-approved mockups,
+        // 2026-11-23 and 2026-11-24).
+        if (engine != null || item.mood != Mood.conversational)
+          Row(
+            children: [
+              if (item.mood != Mood.conversational) ...[_moodTag(context, item.mood), const SizedBox(width: 8)],
+              if (engine != null)
+                Flexible(
+                  child: Text.rich(
+                    TextSpan(
+                      children: [
+                        TextSpan(
+                          text: item.clips.length > 1
+                              ? 'Take ${item.current.clamp(0, item.clips.length - 1) + 1} made with '
+                              : 'Made with ',
+                        ),
+                        TextSpan(
+                          text: engine,
+                          style: TextStyle(color: colors.ink, fontWeight: FontWeight.w700),
+                        ),
+                      ],
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: colors.soft, fontSize: 14),
+                  ),
                 ),
-                TextSpan(
-                  text: engine,
-                  style: TextStyle(color: colors.ink, fontWeight: FontWeight.w700),
-                ),
-              ],
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: colors.soft, fontSize: 14),
+            ],
           ),
         const SizedBox(height: 8),
         _SpokenLine(

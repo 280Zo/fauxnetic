@@ -426,18 +426,21 @@ void main() {
       return c;
     }
 
-    testWidgets('top row: who made it, then the takes, then the model picker at the right', (t) async {
+    // Owner-approved mockup, 2026-11-24: name at the left, takes in the middle, model at the right.
+    testWidgets('top row: who made it at the left, the takes in the middle, the model picker at the right', (t) async {
       await narrow(t);
       final who = t.getRect(inDock(find.textContaining('synthetic')));
-      final takes = t.getRect(inDock(find.byTooltip('Previous take')));
-      final model = t.getRect(inDock(find.byTooltip('Choose the voice model')));
+      final prev = t.getRect(inDock(find.byTooltip('Previous take')));
+      final next = t.getRect(inDock(find.byTooltip('Next take')));
+      final model = t.getRect(inDock(find.byTooltip('Model for Again')));
       final dock = t.getRect(find.byKey(const Key('dock')));
       expect(who.left - dock.left, lessThan(40));
-      expect(who.right, lessThanOrEqualTo(takes.left));
-      expect(takes.right, lessThanOrEqualTo(model.left));
-      expect(model.right, lessThanOrEqualTo(dock.right));
+      expect(who.right, lessThanOrEqualTo(prev.left));
+      expect(next.right, lessThanOrEqualTo(model.left));
+      expect(dock.right - model.right, lessThan(40));
+      expect(((prev.left + next.right) / 2 - dock.center.dx).abs(), lessThan(4), reason: 'takes centered');
       expect((who.center.dy - model.center.dy).abs(), lessThan(4), reason: 'one row');
-      expect(inDock(find.text('Model')), findsNothing, reason: 'no label in the player');
+      expect(inDock(find.text('Model')), findsNothing, reason: 'no caption in the player');
     });
 
     testWidgets('picking a model in the player sets the voice model for the next take', (t) async {
@@ -670,7 +673,10 @@ void main() {
     final made = inDock(find.text('Take 2 made with Qwen3-TTS'));
     expect(made, findsOneWidget);
     expect(t.getRect(made).top, greaterThanOrEqualTo(t.getRect(inDock(find.text('Sam synthetic'))).bottom));
-    expect(inDock(find.text('Again:')), findsOneWidget);
+    expect(inDock(find.text('Again:')), findsNothing, reason: 'no caption (owner, 2026-11-24)');
+    final mood = t.getRect(inDock(find.text('Excited')));
+    expect((mood.center.dy - t.getRect(made).center.dy).abs(), lessThan(4), reason: 'mood on the made-with line');
+    expect(mood.right, lessThanOrEqualTo(t.getRect(made).left));
   });
 
   testWidgets('the voice model picker sits by the text box and starts on Qwen', (t) async {
